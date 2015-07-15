@@ -524,6 +524,17 @@ void loop()
                 string_started = 0; 
             }
 #endif
+            // reset center - like button press
+            else if (serial_data[serial_index-4] == 'R' &&
+                     serial_data[serial_index-3] == 'E' &&
+                     serial_data[serial_index-2] == 'S' &&
+                     serial_data[serial_index-1] == 'E')
+            {  
+                resetValues=1;
+                serial_index = 0;
+                string_started = 0; 
+            }          
+
             // Save RAM settings to EEPROM
             else if (serial_data[serial_index-4] == 'S' &&
                      serial_data[serial_index-3] == 'A' &&
@@ -534,6 +545,7 @@ void loop()
                 serial_index = 0;
                 string_started = 0; 
             }          
+
           
             // Calibrate gyro
             else if (serial_data[serial_index-4] == 'C' &&

@@ -7,9 +7,6 @@
 #include "Arduino.h"
 #include "functions.h"
 #include <Wire.h>
-#include "MadgwickAHRS.h"
-
-//#include "MadgwickAHRS.c"
 
 /*
 Reference for basic sensor/IMU understanding/calculation:
@@ -17,9 +14,6 @@ http://www.starlino.com/imu_guide.html
 http://www.sparkfun.com/datasheets/Sensors/Magneto/Tilt%20Compensated%20Compass.pdf
 https://www.loveelectronics.co.uk/Tutorials/13/tilt-compensated-compass-arduino-tutorial
 http://www.pololu.com/file/download/LSM303DLH-compass-app-note.pdf?file_id=0J434
-
-
-AHRS - https://code.google.com/p/imumargalgorithm30042010sohm/downloads/list
 */
 
 
@@ -163,9 +157,6 @@ float magOffset[3] = {0, 0, 0};
 float gyroOff[3] = {0, 0, 0};
 
 unsigned char htChannels[3] = {8, 7, 6}; // pan, tilt, roll
-
-
-float AEq_1 = 1, AEq_2 = 0, AEq_3 = 0, AEq_4 = 0;  // quaternion orientation of earth frame relative to auxiliary frame
 
 
 //
@@ -465,8 +456,6 @@ void MagCalc(){
     
 }
 
-#if 1 
-#else
 void CalcMagAngle(){
     float tilt90 = tiltAngle - 90, roll90 = rollAngle - 90;
 
@@ -497,7 +486,6 @@ void CalcMagAngle(){
       
     magAngle[2] = -angle;
 }
-#endif
 
 //--------------------------------------------------------------------------------------
 // Func: Filter
@@ -515,11 +503,6 @@ void FilterSensorData()
 	digitalWrite(ARDUINO_LED, HIGH); 
         resetValues = 0; 
 
-#if 1
-        tiltStart = tiltAngle;
-        panStart = panAngle;
-        rollStart = rollAngle;
-#else
 
         tiltStart = panStart = rollStart = 0;
   
@@ -534,55 +517,12 @@ void FilterSensorData()
         tiltStart = accAngle[0];
         panStart = magAngle[2];
         rollStart = accAngle[1];
-#endif
 
 #if FATSHARK_HT_MODULE
         digitalWrite(BUZZER, LOW);
 #endif
 	digitalWrite(ARDUINO_LED, LOW); //ready
     }
-#if 1
-    MadgwickAHRSupdate(1.0 / SAMPLERATE, gyro[0], gyro[1], gyro[2], accG[0], accG[1], accG[2], magV[0], magV[1], magV[2]);
-
-  
-   
-   
-    float ESq_1, ESq_2, ESq_3, ESq_4;                              // quaternion describing orientation of sensor relative to earth
-    float ASq_1, ASq_2, ASq_3, ASq_4;                              // quaternion describing orientation of sensor relative to auxiliary frame
-            
-       // compute the quaternion conjugate
-        ESq_1 = q0;
-        ESq_2 = -q1;
-        ESq_3 = -q2;
-        ESq_4 = -q3;
-
-        // compute the quaternion product
-        ASq_1 = ESq_1 * AEq_1 - ESq_2 * AEq_2 - ESq_3 * AEq_3 - ESq_4 * AEq_4;
-        ASq_2 = ESq_1 * AEq_2 + ESq_2 * AEq_1 + ESq_3 * AEq_4 - ESq_4 * AEq_3;
-        ASq_3 = ESq_1 * AEq_3 - ESq_2 * AEq_4 + ESq_3 * AEq_1 + ESq_4 * AEq_2;
-        ASq_4 = ESq_1 * AEq_4 + ESq_2 * AEq_3 - ESq_3 * AEq_2 + ESq_4 * AEq_1;
-
-        // compute the Euler angles from the quaternion
-        rollAngle = atan2(2 * ASq_3 * ASq_4 - 2 * ASq_1 * ASq_2, 2 * ASq_1 * ASq_1 + 2 * ASq_4 * ASq_4 - 1);
-        tiltAngle = -asin(2 * ASq_2 * ASq_3 - 2 * ASq_1 * ASq_3);
-        panAngle =  atan2(2 * ASq_2 * ASq_3 - 2 * ASq_1 * ASq_4, 2 * ASq_1 * ASq_1 + 2 * ASq_2 * ASq_2 - 1);
-
-/*
-            // compute rotation matrix from quaternion
-            r_11 = 2 * ASq_1 * ASq_1 - 1 + 2 * ASq_2 * ASq_2;
-            r_12 = 2 * (ASq_2 * ASq_3 + ASq_1 * ASq_4);
-            r_13 = 2 * (ASq_2 * ASq_4 - ASq_1 * ASq_3);
-            r_21 = 2 * (ASq_2 * ASq_3 - ASq_1 * ASq_4);
-            r_22 = 2 * ASq_1 * ASq_1 - 1 + 2 * ASq_3 * ASq_3;
-            r_23 = 2 * (ASq_3 * ASq_4 + ASq_1 * ASq_2);
-            r_31 = 2 * (ASq_2 * ASq_4 + ASq_1 * ASq_3);
-            r_32 = 2 * (ASq_3 * ASq_4 - ASq_1 * ASq_2);
-            r_33 = 2 * ASq_1 * ASq_1 - 1 + 2 * ASq_4 * ASq_4;
-   
-
-*/
-
-#else
 
     float cos_tilt=cos((tiltAngle - 90) * FROM_GRADUS), sin_tilt=sin((tiltAngle - 90) * FROM_GRADUS),
 	  cos_roll=cos((rollAngle - 90) * FROM_GRADUS), sin_roll=sin((rollAngle - 90) * FROM_GRADUS);
@@ -591,7 +531,6 @@ void FilterSensorData()
     rollAngle = (rollAngle + (gyro[0] * cos_tilt +  gyro[2] *      sin_tilt)                          / (SAMPLERATE * SCALING_FACTOR)) * gyroWeightTiltRoll + accAngle[1] * (1 - gyroWeightTiltRoll);
     tiltAngle = (tiltAngle + (gyro[1] * cos_roll +  gyro[2] * -1 * sin_roll)                          / (SAMPLERATE * SCALING_FACTOR)) * gyroWeightTiltRoll + accAngle[0] * (1 - gyroWeightTiltRoll);
     panAngle  = (panAngle  + (gyro[2] * cos_tilt + (gyro[0] * -1 * sin_tilt) + ( gyro[1] * sin_roll)) / (SAMPLERATE * SCALING_FACTOR)) * GyroWeightPan      + magAngle[2] * (1 - GyroWeightPan);
-#endif
 
     if (TrackerStarted)  {
         // All low-pass filters
