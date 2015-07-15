@@ -874,9 +874,6 @@ void GetSettings()
     accOffset[1] = EEPROM.read(208) + (EEPROM.read(209) << 8) - 2000;
     accOffset[2] = EEPROM.read(210) + (EEPROM.read(211) << 8) - 2000;
 
-
-    beta = 1-gyroWeightTiltRoll;
-
 #if (DEBUG)
     DebugOutput();
 #endif
