@@ -9,6 +9,7 @@
 // 29/09/2011	SOH Madgwick    Initial release
 // 02/10/2011	SOH Madgwick	Optimised for reduced CPU load
 // 19/02/2012	SOH Madgwick	Magnetometer measurement is normalised
+// 15.07.2015   Night_Ghost@ykoctpa.ru get rid of MadgwickAHRSupdateIMU - checking magnetometer data in MadgwickAHRSupdateIMU
 //
 //=====================================================================================================
 
@@ -105,7 +106,7 @@ void MadgwickAHRSupdate(float time, float gx, float gy, float gz, float ax, floa
 		hx = mx * q0q0 - _2q0my * q3 + _2q0mz * q2 + mx * q1q1 + _2q1 * my * q2 + _2q1 * mz * q3 - mx * q2q2 - mx * q3q3;
 		hy = _2q0mx * q3 + my * q0q0 - _2q0mz * q1 + _2q1mx * q2 - my * q1q1 + my * q2q2 + _2q2 * mz * q3 - my * q3q3;
 		//_2bx = sqrt(hx * hx + hy * hy);
-		if(hx!=0 && hy!=0)
+		if(hx!=0.0f && hy!=0.0f)
 		    _2bx = 1/invSqrt(hx * hx + hy * hy);
 		else
 		    _2bx=0;
