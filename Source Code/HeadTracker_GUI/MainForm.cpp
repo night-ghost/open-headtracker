@@ -109,15 +109,15 @@ System::Void Form1::UpdateUIFromSettings(HTSETTINGS& Settings)
         panGainTrackBar->Value = Settings.ServoGainPan;
         tiltGainTrackBar->Value = Settings.ServoGainTilt;
         rollGainTrackBar->Value = Settings.ServoGainRoll;
-        panCenterTrackBar->Value = Settings.PanCenter - 2100;
-        panMinTrackBar->Value = Settings.PanMin - (Settings.PanCenter - 2100);
-        panMaxTrackBar->Value = Settings.PanMax + (Settings.PanCenter - 2100);
-        tiltCenterTrackBar->Value = Settings.TiltCenter - 2100;
-        tiltMinTrackBar->Value = Settings.TiltMin - (Settings.TiltCenter - 2100);
-        tiltMaxTrackBar->Value = Settings.TiltMax + (Settings.TiltCenter - 2100);
-        rollCenterTrackBar->Value = Settings.RollCenter - 2100;
-        rollMinTrackBar->Value = Settings.RollMin - (Settings.RollCenter - 2100);
-        rollMaxTrackBar->Value = Settings.RollMax + (Settings.RollCenter - 2100);
+        panCenterTrackBar->Value = Settings.PanCenter;
+        panMinTrackBar->Value = Settings.PanMin;
+        panMaxTrackBar->Value = Settings.PanMax;
+        tiltCenterTrackBar->Value = Settings.TiltCenter;
+        tiltMinTrackBar->Value = Settings.TiltMin;
+        tiltMaxTrackBar->Value = Settings.TiltMax;
+        rollCenterTrackBar->Value = Settings.RollCenter;
+        rollMinTrackBar->Value = Settings.RollMin;
+        rollMaxTrackBar->Value = Settings.RollMax;
     }
     catch (System::Exception^ e)
     {
@@ -176,6 +176,27 @@ System::Void Form1::UpdateSettingsFromUI(HTSETTINGS& Settings)
     Settings.RollCh = Convert::ToByte(inputRollCh->Text);
 }
 
+/*
+System::Void onReady(void){
+        //RetrieveSettings();
+		HTSettings = TrackerWrap::Tracker->RetrieveSettings();
+        Form1::theForm->UpdateUIFromSettings(HTSettings);
+        float f = TrackerWrap::Tracker->Version;
+        Form1::theForm->Serial_output_box->Text += String::Format("Firmware Version {0}\r\n", f);
+        //Form1::theForm->comPortTimer->Enabled = false;
+}
+*/
+System::Void Form1::onReady(void){
+		RetrieveSettings();
+        UpdateUIFromSettings(HTSettings);
+
+		TrackerWrap::Tracker->GetVersion();
+
+        float f = TrackerWrap::Tracker->Version;
+        Serial_output_box->Text += String::Format("\r\nFirmware Version {0}\r\n", f);
+}
+
+
 //--------------------------------------------------------------------------------------
 // Func: btn_connect_Click
 // Desc: Event handler for hardware connection button.
@@ -183,11 +204,14 @@ System::Void Form1::UpdateSettingsFromUI(HTSETTINGS& Settings)
 System::Void Form1::btn_connect_Click(System::Object^ sender, System::EventArgs^ e)
 {
     btn_connect->Enabled = false;
+
+	rLine="";
+
     TrackerWrap::Tracker->Open(dd_comport->Text, true);
-    if (TrackerWrap::Tracker->Port->IsOpen)
-    {
+    if (TrackerWrap::Tracker->Port->IsOpen)  {
         // Start reading from the port
         timer1->Enabled = true;
+		Serial_output_box->Clear(); // new session
 
         // Stop any streaming, in case something failed last time
         TrackerWrap::Tracker->StreamTrackingData(false);
@@ -201,12 +225,19 @@ System::Void Form1::btn_connect_Click(System::Object^ sender, System::EventArgs^
         calibrationWizardToolStripMenuItem->Enabled = true;
         calibrationWizardRotToolStripMenuItem->Enabled = true;
         btnSendManualCmd->Enabled = true;
+
+		comPortTimer->Enabled = false;
+
+		//Sleep(5000);
         
-        RetrieveSettings();
+/*	all in function onReady()
+		RetrieveSettings();
         UpdateUIFromSettings(HTSettings);
         float f = TrackerWrap::Tracker->Version;
         Serial_output_box->Text += String::Format("Firmware Version {0}\r\n", f);
-        comPortTimer->Enabled = false;
+		comPortTimer->Enabled = false;
+        
+*/
     }
     else
     {
@@ -240,41 +271,56 @@ System::Void Form1::btn_disconnect_Click(System::Object^ sender, System::EventAr
     btnSendManualCmd->Enabled = false;
 }
 
+System::Void Form1::lineReceived(System::String^ line){
+	Debug::WriteLine(line);
+	
+	//OutputDebugString(line);
+	if(line == "$OK!$")
+		onReady();
+}
+
+
 //--------------------------------------------------------------------------------------
 // Func: timer1_Tick
 // Desc: A window timer is used to update the UI every n milliseconds. Here's where the
 //       work is done to capture serial data from the hardware and update the UI with
 //       the data.
 //--------------------------------------------------------------------------------------
-System::Void Form1::timer1_Tick(System::Object^ sender, System::EventArgs^ e)
-{
-    if (TrackerWrap::Tracker->Port->IsOpen && !_CalWizard->Visible)
-    {
-        while(TrackerWrap::Tracker->Port->BytesToRead > 0)
-        {
+System::Void Form1::timer1_Tick(System::Object^ sender, System::EventArgs^ e) {
+	byte lastbyte;
+	serialbyte=-1;
+
+    if (TrackerWrap::Tracker->Port->IsOpen && !_CalWizard->Visible) {
+        while(TrackerWrap::Tracker->Port->BytesToRead > 0)    {
+			lastbyte=serialbyte;
             serialbyte = (TrackerWrap::Tracker->Port->ReadChar());
 
             Serial_output_box->Text += Convert::ToChar((serialbyte));
 
-            if (serialbyte == 13)
-            {
+			if(serialbyte == 10) serialbyte = 13;
+
+
+            if (serialbyte == 13)          {
+				if(lastbyte==13) continue;
+
                 linecount++;
 
-                if (linecount > 12)
+				lineReceived(rLine);
+				rLine="";
+
+                if (linecount > 300)
                 {
                     Serial_output_box->Clear();
                     linecount = 0;
                 }
-            }
+            } else
+				rLine += Convert::ToChar((serialbyte));
 
-            if (TrackerWrap::Tracker->TrackStreaming)
-            {
-                if (serialbyte == 13)
-                {
+            if (TrackerWrap::Tracker->TrackStreaming) {
+                if (serialbyte == 13)  {
                     i++;
                     
-                    if (i == 1)
-                    {
+                    if (i == 1){
                         chart1->ChartAreas["ChartArea1"]->BackColor = System::Drawing::Color::WhiteSmoke;
                     }
                     
@@ -286,13 +332,9 @@ System::Void Form1::timer1_Tick(System::Object^ sender, System::EventArgs^ e)
                     SerialData[1] = 0;
                     SerialData[2] = 0;
                     Serialindex   = 0;
-                }
-                else if (serialbyte == 44)
-                {
+                } else if (serialbyte == 44) {
                     Serialindex++;
-                }
-                else if (serialbyte > 47 && serialbyte < 58)
-                {
+                } else if (serialbyte > 47 && serialbyte < 58) {
                     SerialData[Serialindex] = SerialData[Serialindex] * 10 + (serialbyte - 48);
                 }
             }
@@ -311,8 +353,7 @@ System::Void Form1::comPortTimer_Tick(System::Object^  sender, System::EventArgs
 
     array<String^>^ ports = TrackerWrap::Tracker->Port->GetPortNames();
     dd_comport->Items->Clear();
-    for each(String^ port in ports)
-    {
+    for each(String^ port in ports) {
         dd_comport->Items->Add(port);
     }
 
@@ -442,14 +483,16 @@ System::Void Form1::ManualCmdEdit_OnKeyDown(System::Object^  sender, System::Win
 System::Void Form1::PanCenterTrackBar_ValueChanged(System::Object^ sender, System::EventArgs^ e)
 {
     lblShowOutput->Text = Convert::ToString(panCenterTrackBar->Value);
-    inputPanCenter->Text = Convert::ToString(2100 + panCenterTrackBar->Value);
-    int temp = panMinTrackBar->Value + panCenterTrackBar->Value;
+    inputPanCenter->Text = Convert::ToString(panCenterTrackBar->Value);
+/*   
+	int temp =  panCenterTrackBar->Value;
     if (temp >= 0)
         inputPanTravlMin->Text = Convert::ToString(temp); 
 
     temp = panMaxTrackBar->Value - panCenterTrackBar->Value;
     if (temp >= 0)
         inputPanTravlMax->Text = Convert::ToString(temp); 
+*/
 }
 
 //--------------------------------------------------------------------------------------
@@ -459,10 +502,12 @@ System::Void Form1::PanCenterTrackBar_ValueChanged(System::Object^ sender, Syste
 System::Void Form1::PanMinTrackBar_ValueChanged(System::Object^ sender, System::EventArgs^ e)
 {
     lblShowOutput->Text = Convert::ToString(panMinTrackBar->Value);
-    inputPanCenter->Text = Convert::ToString(2100 + panCenterTrackBar->Value);
-    int temp = panMinTrackBar->Value + panCenterTrackBar->Value;
+    inputPanCenter->Text = Convert::ToString(panCenterTrackBar->Value);
+  /*
+	int temp = panMinTrackBar->Value + panCenterTrackBar->Value;
     if (temp >= 0)
         inputPanTravlMin->Text = Convert::ToString(temp);
+*/
 }
 
 //--------------------------------------------------------------------------------------
@@ -472,10 +517,12 @@ System::Void Form1::PanMinTrackBar_ValueChanged(System::Object^ sender, System::
 System::Void Form1::PanMaxTrackBar_ValueChanged(System::Object^ sender, System::EventArgs^ e)
 {
     lblShowOutput->Text = Convert::ToString(panMaxTrackBar->Value);
-    inputPanCenter->Text = Convert::ToString(2100 + panCenterTrackBar->Value);
-    int temp = panMaxTrackBar->Value - panCenterTrackBar->Value;
+    inputPanCenter->Text = Convert::ToString(panCenterTrackBar->Value);
+/*
+	int temp = panMaxTrackBar->Value - panCenterTrackBar->Value;
     if (temp >= 0)
         inputPanTravlMax->Text = Convert::ToString(temp); 
+*/
 }
 
 //--------------------------------------------------------------------------------------
@@ -485,14 +532,16 @@ System::Void Form1::PanMaxTrackBar_ValueChanged(System::Object^ sender, System::
 System::Void Form1::TiltCenterTrackBar_ValueChanged(System::Object^ sender, System::EventArgs^ e)
 {
     lblShowOutput->Text = Convert::ToString(tiltCenterTrackBar->Value);
-    inputTiltCenter->Text = Convert::ToString(2100 + tiltCenterTrackBar->Value);
-    int temp = tiltMinTrackBar->Value + tiltCenterTrackBar->Value;
+    inputTiltCenter->Text = Convert::ToString(tiltCenterTrackBar->Value);
+/*
+	int temp = tiltMinTrackBar->Value + tiltCenterTrackBar->Value;
     if (temp >= 0)
         inputTiltTravlMin->Text = Convert::ToString(temp); 
 
     temp = tiltMaxTrackBar->Value - tiltCenterTrackBar->Value;
     if (temp >= 0)
         inputTiltTravlMax->Text = Convert::ToString(temp);
+*/
 }
 
 //--------------------------------------------------------------------------------------
@@ -502,10 +551,12 @@ System::Void Form1::TiltCenterTrackBar_ValueChanged(System::Object^ sender, Syst
 System::Void Form1::TiltMinTrackBar_ValueChanged(System::Object^ sender, System::EventArgs^ e)
 {
     lblShowOutput->Text = Convert::ToString(tiltMinTrackBar->Value);
-    inputTiltCenter->Text = Convert::ToString(2100 + tiltCenterTrackBar->Value);
-    int temp = tiltMinTrackBar->Value + tiltCenterTrackBar->Value;
+    inputTiltCenter->Text = Convert::ToString(tiltCenterTrackBar->Value);
+/*
+	int temp = tiltMinTrackBar->Value + tiltCenterTrackBar->Value;
     if (temp >= 0)
         inputTiltTravlMin->Text = Convert::ToString(temp);
+*/
 }
 
 //--------------------------------------------------------------------------------------
@@ -515,11 +566,12 @@ System::Void Form1::TiltMinTrackBar_ValueChanged(System::Object^ sender, System:
 System::Void Form1::TiltMaxTrackBar_ValueChanged(System::Object^ sender, System::EventArgs^ e)
 {
     lblShowOutput->Text = Convert::ToString(tiltMaxTrackBar->Value);
-
-    inputTiltCenter->Text = Convert::ToString(2100 + tiltCenterTrackBar->Value);
-    int temp = tiltMaxTrackBar->Value - tiltCenterTrackBar->Value;
+    inputTiltCenter->Text = Convert::ToString(tiltCenterTrackBar->Value);
+/*
+	int temp = tiltMaxTrackBar->Value - tiltCenterTrackBar->Value;
     if (temp >= 0)
         inputTiltTravlMax->Text = Convert::ToString(temp); 
+*/
 }
 
 //--------------------------------------------------------------------------------------
@@ -529,16 +581,16 @@ System::Void Form1::TiltMaxTrackBar_ValueChanged(System::Object^ sender, System:
 System::Void Form1::RollCenterTrackBar_ValueChanged(System::Object^ sender, System::EventArgs^ e)
 {
     lblShowOutput->Text = Convert::ToString(rollCenterTrackBar->Value);
-
-
-    inputRollCenter->Text = Convert::ToString(2100 + rollCenterTrackBar->Value);
-    int temp = rollMinTrackBar->Value + rollCenterTrackBar->Value;
+    inputRollCenter->Text = Convert::ToString(rollCenterTrackBar->Value);
+/*    
+	int temp = rollMinTrackBar->Value + rollCenterTrackBar->Value;
     if (temp >= 0)
         inputRollTravlMin->Text = Convert::ToString(temp); 
 
     temp = rollMaxTrackBar->Value - rollCenterTrackBar->Value;
     if (temp >= 0)
         inputRollTravlMax->Text = Convert::ToString(temp); 
+*/
 }
 
 //--------------------------------------------------------------------------------------
@@ -548,10 +600,12 @@ System::Void Form1::RollCenterTrackBar_ValueChanged(System::Object^ sender, Syst
 System::Void Form1::RollMinTrackBar_ValueChanged(System::Object^ sender, System::EventArgs^ e)
 {
     lblShowOutput->Text = Convert::ToString(rollMinTrackBar->Value);
-    inputRollCenter->Text = Convert::ToString(2100 + rollCenterTrackBar->Value);
-    int temp = rollMinTrackBar->Value + rollCenterTrackBar->Value;
+    inputRollCenter->Text = Convert::ToString(rollCenterTrackBar->Value);
+/*    
+	int temp = rollMinTrackBar->Value + rollCenterTrackBar->Value;
     if (temp >= 0)
         inputRollTravlMin->Text = Convert::ToString(temp);
+*/
 }
 
 //--------------------------------------------------------------------------------------
@@ -561,10 +615,13 @@ System::Void Form1::RollMinTrackBar_ValueChanged(System::Object^ sender, System:
 System::Void Form1::RollMaxTrackBar_ValueChanged(System::Object^ sender, System::EventArgs^ e)
 {
     lblShowOutput->Text = Convert::ToString(rollMaxTrackBar->Value);
-    inputRollCenter->Text = Convert::ToString(2100 + rollCenterTrackBar->Value);
-    int temp = rollMaxTrackBar->Value - rollCenterTrackBar->Value;
+    inputRollCenter->Text = Convert::ToString(rollCenterTrackBar->Value);
+
+/*	
+	int temp = rollMaxTrackBar->Value - rollCenterTrackBar->Value;
     if (temp >= 0)
         inputRollTravlMax->Text =Convert::ToString(temp); 
+*/
 }
 
 //--------------------------------------------------------------------------------------
@@ -655,7 +712,7 @@ System::Void Form1::PanCenterEdit_ValueChanged(System::Object^  sender, System::
     {
         try
         {
-            panCenterTrackBar->Value = Convert::ToInt32(inputPanCenter->Text, 10) - 2100;
+            panCenterTrackBar->Value = Convert::ToInt32(inputPanCenter->Text, 10);
 
             int temp = panMinTrackBar->Value + panCenterTrackBar->Value;
             if (temp >= 0)
@@ -718,7 +775,7 @@ System::Void Form1::TiltCenterEdit_ValueChanged(System::Object^  sender, System:
     {
         try
         {
-            tiltCenterTrackBar->Value = Convert::ToInt32(inputTiltCenter->Text, 10) - 2100;
+            tiltCenterTrackBar->Value = Convert::ToInt32(inputTiltCenter->Text, 10);
 
             int temp = tiltMinTrackBar->Value + tiltCenterTrackBar->Value;
             if (temp >= 0)
@@ -781,7 +838,7 @@ System::Void Form1::RollCenterEdit_ValueChanged(System::Object^  sender, System:
     {
         try
         {
-            rollCenterTrackBar->Value = Convert::ToInt32(inputRollCenter->Text, 10) - 2100;
+            rollCenterTrackBar->Value = Convert::ToInt32(inputRollCenter->Text, 10);
 
             int temp = rollMinTrackBar->Value + rollCenterTrackBar->Value;
             if (temp >= 0)

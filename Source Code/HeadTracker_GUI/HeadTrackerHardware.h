@@ -10,6 +10,7 @@
 #include "Windows.h"
 
 using namespace System;
+using namespace System::Diagnostics;
 
 #define HT_TILT_REVERSE_BIT     0x01
 #define HT_ROLL_REVERSE_BIT     0x02
@@ -53,6 +54,9 @@ ref class HeadTracker
     // when new settings are added to the firmware. +1 for newline.
 #define HT_SETTINGS_COUNT       20
 
+private:
+		System::Void (*todo)();
+
 public: // methods
 
     HeadTracker()
@@ -64,22 +68,24 @@ public: // methods
     {
     }
 
-    System::Void Open(String^ ComPort, boolean ForceOpen)
-    {
+    System::Void Open(String^ ComPort, boolean ForceOpen ) {
         Port->PortName = ComPort;
-        Port->BaudRate = 57600;
+        Port->BaudRate = 57600; //115200;
         Port->ReadTimeout = 2000;
-        try
-        {
+        try    {
             Port->Open();
         }
-        catch (System::Exception^ e)
-        {
+        catch (System::Exception^ e)    {
 
         }
         
         if ( Port->IsOpen )
         {
+			Port->DtrEnable = true;
+			Sleep(30);
+			Port->DtrEnable = false;
+			Sleep(200);
+/*			
             GetVersion();
         
             // Sometimes version retrieval early in power-up doesn't work. Try again.
@@ -90,6 +96,7 @@ public: // methods
             // open, we don't care about failures, leave the COM port open.
             if ( _FWVersion == 0.0 && !ForceOpen)
                 this->Close();
+*/
         }
     }
 
@@ -310,10 +317,8 @@ public: // methods
         StoreMagCal(0, 0, 0);
     }
 
-    System::Void CalibrateGyro()
-    {
-        if ( Port->IsOpen)
-        {
+    System::Void CalibrateGyro()    {
+        if ( Port->IsOpen)        {
             Port->WriteLine(String::Format("$CALG"));
         }
     }
@@ -322,14 +327,14 @@ public: // methods
     {
         System::String^ line;
         
-        try
-        {
+        try {
             line = Port->ReadLine();
         }
-        catch (System::Exception^ e)
-        {
-            return "Error";
+        catch (System::Exception^ e){
+			return "#Error#";
         }
+		if(line == "$OK!$")
+			(*todo)();
         return line;
     }
 

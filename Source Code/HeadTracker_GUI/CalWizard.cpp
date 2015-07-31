@@ -61,15 +61,15 @@ System::Void CalWizard::MainUpdateTimer_Tick(System::Object^  sender, System::Ev
 
             if (TrackerWrap::Tracker->MagAccelStreaming)
             {
-                if (serialbyte == 13)
-                {
-                    SerialData[0] -= 3000;
-                    SerialData[1] -= 3000;
-                    SerialData[2] -= 3000;
-                    SerialData[3] -= 3000;
-                    SerialData[4] -= 3000;
-                    SerialData[5] -= 3000;
-                    
+                if (serialbyte == 13) {
+					
+                    if(SerialData[0]>1600) SerialData[0] -= 3000;
+                    if(SerialData[1]>1600) SerialData[1] -= 3000;
+                    if(SerialData[2]>1600) SerialData[2] -= 3000;
+                    if(SerialData[3]>1600) SerialData[3] -= 3000;
+                    if(SerialData[4]>1600) SerialData[4] -= 3000;
+                    if(SerialData[5]>1600) SerialData[5] -= 3000;
+                   
                     if ( Serialindex == 5 )
                     {
                         // Mag Y and Z swapped on purpose

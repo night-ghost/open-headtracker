@@ -10,6 +10,7 @@ namespace HeadTrackerGUI {
     using namespace System::Windows::Forms;
     using namespace System::Data;
     using namespace System::Drawing;
+	using namespace System::Diagnostics;
 
     /// <summary>
     /// Summary for Form1
@@ -21,8 +22,12 @@ namespace HeadTrackerGUI {
         {
             InitializeComponent();
 
+			theForm = this;
             _CalWizard = gcnew CalWizard;
         }
+
+		static Form1^ theForm;
+		//System::Void Form1::onReady();
 
     protected:
         /// <summary>
@@ -36,16 +41,19 @@ namespace HeadTrackerGUI {
             }
         }
     
+	public: 
+		System::Windows::Forms::TextBox^  Serial_output_box;
+        System::Void UpdateUIFromSettings(HTSETTINGS& Settings);
+		System::Windows::Forms::Timer^  comPortTimer;
+        
     private: 
     
         System::Windows::Forms::ComboBox^  dd_comport; 
         System::Windows::Forms::Button^  btn_connect;
         System::Windows::Forms::Button^  btn_disconnect;
         System::Windows::Forms::Timer^  timer1;
-        System::Windows::Forms::Timer^  comPortTimer;
         System::Windows::Forms::DataVisualization::Charting::Chart^  chart1;
         System::Windows::Forms::Label^  Lowpass_text;
-        System::Windows::Forms::TextBox^  Serial_output_box;
         System::Windows::Forms::TextBox^  textBox_LP_value;
         System::Windows::Forms::Button^  btn_update_headtracker;
         System::Windows::Forms::Button^  start_HT;
@@ -355,6 +363,7 @@ namespace HeadTrackerGUI {
             this->Serial_output_box->Name = L"Serial_output_box";
             this->Serial_output_box->Size = System::Drawing::Size(321, 165);
             this->Serial_output_box->TabIndex = 80;
+			this->Serial_output_box->ScrollBars = ScrollBars::Vertical;
             // 
             // textBox_LP_value
             // 
@@ -659,12 +668,12 @@ namespace HeadTrackerGUI {
             // rollMaxTrackBar
             // 
             this->rollMaxTrackBar->Location = System::Drawing::Point(288, 138);
-            this->rollMaxTrackBar->Maximum = 1150;
+            this->rollMaxTrackBar->Maximum = 2200;
             this->rollMaxTrackBar->Name = L"rollMaxTrackBar";
             this->rollMaxTrackBar->Size = System::Drawing::Size(130, 45);
             this->rollMaxTrackBar->TabIndex = 170;
             this->rollMaxTrackBar->TickStyle = System::Windows::Forms::TickStyle::None;
-            this->rollMaxTrackBar->Value = 1150;
+            this->rollMaxTrackBar->Value = 2150;
             this->rollMaxTrackBar->ValueChanged += gcnew System::EventHandler(this, &Form1::RollMaxTrackBar_ValueChanged);
             // 
             // label23
@@ -679,7 +688,7 @@ namespace HeadTrackerGUI {
             // rollMinTrackBar
             // 
             this->rollMinTrackBar->Location = System::Drawing::Point(287, 93);
-            this->rollMinTrackBar->Maximum = 1150;
+            this->rollMinTrackBar->Maximum = 1500;
             this->rollMinTrackBar->Name = L"rollMinTrackBar";
             this->rollMinTrackBar->Size = System::Drawing::Size(130, 45);
             this->rollMinTrackBar->TabIndex = 168;
@@ -699,8 +708,8 @@ namespace HeadTrackerGUI {
             // rollCenterTrackBar
             // 
             this->rollCenterTrackBar->Location = System::Drawing::Point(288, 56);
-            this->rollCenterTrackBar->Maximum = 400;
-            this->rollCenterTrackBar->Minimum = -400;
+            this->rollCenterTrackBar->Maximum = 2200;
+            this->rollCenterTrackBar->Minimum = 900;
             this->rollCenterTrackBar->Name = L"rollCenterTrackBar";
             this->rollCenterTrackBar->Size = System::Drawing::Size(130, 45);
             this->rollCenterTrackBar->TabIndex = 166;
@@ -719,12 +728,12 @@ namespace HeadTrackerGUI {
             // tiltMaxTrackBar
             // 
             this->tiltMaxTrackBar->Location = System::Drawing::Point(147, 138);
-            this->tiltMaxTrackBar->Maximum = 1150;
+            this->tiltMaxTrackBar->Maximum = 2200;
             this->tiltMaxTrackBar->Name = L"tiltMaxTrackBar";
             this->tiltMaxTrackBar->Size = System::Drawing::Size(130, 45);
             this->tiltMaxTrackBar->TabIndex = 164;
             this->tiltMaxTrackBar->TickStyle = System::Windows::Forms::TickStyle::None;
-            this->tiltMaxTrackBar->Value = 1150;
+            this->tiltMaxTrackBar->Value = 2150;
             this->tiltMaxTrackBar->ValueChanged += gcnew System::EventHandler(this, &Form1::TiltMaxTrackBar_ValueChanged);
             // 
             // label20
@@ -739,7 +748,7 @@ namespace HeadTrackerGUI {
             // tiltMinTrackBar
             // 
             this->tiltMinTrackBar->Location = System::Drawing::Point(146, 93);
-            this->tiltMinTrackBar->Maximum = 1150;
+            this->tiltMinTrackBar->Maximum = 1500;
             this->tiltMinTrackBar->Name = L"tiltMinTrackBar";
             this->tiltMinTrackBar->Size = System::Drawing::Size(130, 45);
             this->tiltMinTrackBar->TabIndex = 162;
@@ -759,8 +768,8 @@ namespace HeadTrackerGUI {
             // tiltCenterTrackBar
             // 
             this->tiltCenterTrackBar->Location = System::Drawing::Point(147, 56);
-            this->tiltCenterTrackBar->Maximum = 400;
-            this->tiltCenterTrackBar->Minimum = -400;
+            this->tiltCenterTrackBar->Maximum = 2200;
+            this->tiltCenterTrackBar->Minimum = 90;
             this->tiltCenterTrackBar->Name = L"tiltCenterTrackBar";
             this->tiltCenterTrackBar->Size = System::Drawing::Size(130, 45);
             this->tiltCenterTrackBar->TabIndex = 160;
@@ -779,12 +788,12 @@ namespace HeadTrackerGUI {
             // panMaxTrackBar
             // 
             this->panMaxTrackBar->Location = System::Drawing::Point(11, 138);
-            this->panMaxTrackBar->Maximum = 1150;
+            this->panMaxTrackBar->Maximum = 2200;
             this->panMaxTrackBar->Name = L"panMaxTrackBar";
             this->panMaxTrackBar->Size = System::Drawing::Size(130, 45);
             this->panMaxTrackBar->TabIndex = 158;
             this->panMaxTrackBar->TickStyle = System::Windows::Forms::TickStyle::None;
-            this->panMaxTrackBar->Value = 1150;
+            this->panMaxTrackBar->Value = 2150;
             this->panMaxTrackBar->ValueChanged += gcnew System::EventHandler(this, &Form1::PanMaxTrackBar_ValueChanged);
             // 
             // label18
@@ -799,7 +808,7 @@ namespace HeadTrackerGUI {
             // panMinTrackBar
             // 
             this->panMinTrackBar->Location = System::Drawing::Point(10, 93);
-            this->panMinTrackBar->Maximum = 1150;
+            this->panMinTrackBar->Maximum = 1500;
             this->panMinTrackBar->Name = L"panMinTrackBar";
             this->panMinTrackBar->Size = System::Drawing::Size(130, 45);
             this->panMinTrackBar->TabIndex = 156;
@@ -830,8 +839,8 @@ namespace HeadTrackerGUI {
             // panCenterTrackBar
             // 
             this->panCenterTrackBar->Location = System::Drawing::Point(11, 56);
-            this->panCenterTrackBar->Maximum = 400;
-            this->panCenterTrackBar->Minimum = -400;
+            this->panCenterTrackBar->Maximum = 2200;
+            this->panCenterTrackBar->Minimum = 900;
             this->panCenterTrackBar->Name = L"panCenterTrackBar";
             this->panCenterTrackBar->Size = System::Drawing::Size(130, 45);
             this->panCenterTrackBar->TabIndex = 140;
@@ -979,7 +988,7 @@ namespace HeadTrackerGUI {
             this->inputPanCenter->Name = L"inputPanCenter";
             this->inputPanCenter->Size = System::Drawing::Size(46, 20);
             this->inputPanCenter->TabIndex = 122;
-            this->inputPanCenter->Text = L"2100";
+            this->inputPanCenter->Text = L"1500";
             this->inputPanCenter->TextChanged += gcnew System::EventHandler(this, &Form1::PanCenterEdit_ValueChanged);
             // 
             // inputPanTravlMin
@@ -988,7 +997,7 @@ namespace HeadTrackerGUI {
             this->inputPanTravlMin->Name = L"inputPanTravlMin";
             this->inputPanTravlMin->Size = System::Drawing::Size(46, 20);
             this->inputPanTravlMin->TabIndex = 121;
-            this->inputPanTravlMin->Text = L"1150";
+            this->inputPanTravlMin->Text = L"1050";
             this->inputPanTravlMin->TextChanged += gcnew System::EventHandler(this, &Form1::PanMinTravelEdit_ValueChanged);
             // 
             // lbl_servo_center
@@ -1026,7 +1035,7 @@ namespace HeadTrackerGUI {
             this->inputPanTravlMax->Name = L"inputPanTravlMax";
             this->inputPanTravlMax->Size = System::Drawing::Size(46, 20);
             this->inputPanTravlMax->TabIndex = 134;
-            this->inputPanTravlMax->Text = L"1150";
+            this->inputPanTravlMax->Text = L"2150";
             this->inputPanTravlMax->TextChanged += gcnew System::EventHandler(this, &Form1::PanMaxTravelEdit_ValueChanged);
             // 
             // label1
@@ -1044,7 +1053,7 @@ namespace HeadTrackerGUI {
             this->inputTiltCenter->Name = L"inputTiltCenter";
             this->inputTiltCenter->Size = System::Drawing::Size(46, 20);
             this->inputTiltCenter->TabIndex = 139;
-            this->inputTiltCenter->Text = L"2100";
+            this->inputTiltCenter->Text = L"1500";
             this->inputTiltCenter->TextChanged += gcnew System::EventHandler(this, &Form1::TiltCenterEdit_ValueChanged);
             // 
             // inputTiltTravlMin
@@ -1053,7 +1062,7 @@ namespace HeadTrackerGUI {
             this->inputTiltTravlMin->Name = L"inputTiltTravlMin";
             this->inputTiltTravlMin->Size = System::Drawing::Size(46, 20);
             this->inputTiltTravlMin->TabIndex = 138;
-            this->inputTiltTravlMin->Text = L"1150";
+            this->inputTiltTravlMin->Text = L"1050";
             this->inputTiltTravlMin->TextChanged += gcnew System::EventHandler(this, &Form1::TiltMinTravelEdit_ValueChanged);
             // 
             // label3
@@ -1073,7 +1082,7 @@ namespace HeadTrackerGUI {
             this->inputTiltTravlMax->Name = L"inputTiltTravlMax";
             this->inputTiltTravlMax->Size = System::Drawing::Size(46, 20);
             this->inputTiltTravlMax->TabIndex = 141;
-            this->inputTiltTravlMax->Text = L"1150";
+            this->inputTiltTravlMax->Text = L"2150";
             this->inputTiltTravlMax->TextChanged += gcnew System::EventHandler(this, &Form1::TiltMaxTravelEdit_ValueChanged);
             // 
             // inputRollCenter
@@ -1082,7 +1091,7 @@ namespace HeadTrackerGUI {
             this->inputRollCenter->Name = L"inputRollCenter";
             this->inputRollCenter->Size = System::Drawing::Size(46, 20);
             this->inputRollCenter->TabIndex = 146;
-            this->inputRollCenter->Text = L"2100";
+            this->inputRollCenter->Text = L"1500";
             this->inputRollCenter->TextChanged += gcnew System::EventHandler(this, &Form1::RollCenterEdit_ValueChanged);
             // 
             // inputRollTravlMin
@@ -1091,7 +1100,7 @@ namespace HeadTrackerGUI {
             this->inputRollTravlMin->Name = L"inputRollTravlMin";
             this->inputRollTravlMin->Size = System::Drawing::Size(46, 20);
             this->inputRollTravlMin->TabIndex = 145;
-            this->inputRollTravlMin->Text = L"1150";
+            this->inputRollTravlMin->Text = L"1050";
             this->inputRollTravlMin->TextChanged += gcnew System::EventHandler(this, &Form1::RollMinTravelEdit_ValueChanged);
             // 
             // label7
@@ -1111,7 +1120,7 @@ namespace HeadTrackerGUI {
             this->inputRollTravlMax->Name = L"inputRollTravlMax";
             this->inputRollTravlMax->Size = System::Drawing::Size(46, 20);
             this->inputRollTravlMax->TabIndex = 148;
-            this->inputRollTravlMax->Text = L"1150";
+            this->inputRollTravlMax->Text = L"2150";
             this->inputRollTravlMax->TextChanged += gcnew System::EventHandler(this, &Form1::RollMaxTravelEdit_ValueChanged);
             // 
             // servoGainRoll
@@ -1268,10 +1277,13 @@ private: // variables
 
     CalWizard^ _CalWizard;
 
+	System::String^ rLine; // received line
+
 private:
     System::Void Form1_Load(System::Object^  sender, System::EventArgs^  e);
     System::Void RetrieveSettings();
-    System::Void UpdateUIFromSettings(HTSETTINGS& Settings);
+	System::Void onReady();
+	System::Void Form1::lineReceived(System::String^ line);
     System::Void UpdateSettingsFromUI(HTSETTINGS& Settings);
     System::Void btn_connect_Click(System::Object^  sender, System::EventArgs^  e);
     System::Void btn_disconnect_Click(System::Object^  sender, System::EventArgs^  e);
