@@ -20,7 +20,6 @@
 #include "sensors.h"
 #include <EEPROM.h>
 
-
 /*
 Channel mapping/config for PPM out:
 
@@ -66,19 +65,18 @@ char ht_paused = 0;
 
 // External variables (defined in other files)
 //
-extern unsigned char PpmIn_PpmOut[13];
 extern char read_sensors;
 extern char resetValues;   
-extern char tiltInverse;
-extern char rollInverse;
-extern char panInverse;
 
 // Settings (Defined in sensors.cpp)
 //
+
+/*
+extern unsigned char PpmIn_PpmOut[13];
 extern float tiltRollBeta;
 extern float panBeta;
 extern float gyroWeightTiltRoll;
-extern float GyroWeightPan;
+extern float gyroWeightPan;
 extern int servoPanCenter;
 extern int servoTiltCenter;
 extern int servoRollCenter;
@@ -96,8 +94,12 @@ extern unsigned char htChannels[];
 extern float gyroOff[];
 extern float magOffset[];
 extern int accOffset[]; 
+*/
+extern settings sets;
 
-extern float beta;
+
+float dynFactor=1;
+
 
 // End settings   
 
@@ -127,11 +129,12 @@ void setup()
     Wire.begin();               // Start I2C
 
     // If the device have just been programmed, write initial config/values to EEPROM:
-    if (EEPROM.read(0) != 8)
+    if (EEPROM.read(0) != EEPROM_VERSION)
     {
 //#if (DEBUG)
-//        Serial.printf_P(PSTR("New board - saving default values!\n"));
+        Serial.printf_P(PSTR("New board - saving default values!\n"));
 //#endif    
+	clearSettings();
     
         InitSensors();
         SaveSettings();
@@ -141,13 +144,14 @@ void setup()
  
     GetSettings();                 // Get settings saved in EEPROM
     InitSensors();                // Initialize I2C sensors
-#if ALWAYS_CAL_GYRO
+//#if ALWAYS_CAL_GYRO - uses delay() so should be before reinit Timer0
     SetGyroOffset();
-#endif     
+//#endif     
     CalibrateAccel();
     CalibrateMag();
-//    ResetCenter();
-    resetValues=1;
+
+    ResetCenter();
+//    resetValues=1;
 
 #if FATSHARK_HT_MODULE
     pinMode(BUZZER,OUTPUT);         // Buzzer
@@ -162,6 +166,50 @@ void setup()
     InitPWMInterrupt();         // Start PWM interrupt  
 
     digitalWrite(ARDUINO_LED, LOW); //ready
+
+    Serial.printf_P(PSTR("$OK!$\n"));
+
+}
+
+int tail_cmp( char *pat){
+    char *str=&serial_data[serial_index];
+    int len=strlen(pat);
+    return !strncmp(str-len,pat,len);
+}
+
+
+void parse_data(byte off, int *valuesReceived, byte n) {
+    byte comma_index = 0;
+
+#if DEBUG
+        int *ptr0=valuesReceived;
+#endif
+
+    for (byte k = 0; k < serial_index - off && comma_index < n; k++) {
+
+#if DEBUG
+        Serial.print(serial_data[k]);
+#endif
+
+        // Looking for comma
+        if (serial_data[k] == ',') {
+            comma_index++;
+            valuesReceived++;
+        } else  {
+            *valuesReceived = *valuesReceived * 10 + (serial_data[k] - '0');
+        }
+    }
+
+
+#if DEBUG
+                Serial.print("\n>");
+                for (unsigned char k = 0; k < comma_index+1; k++) {
+                    Serial.print(ptr0[k]); 
+                    Serial.write(',');
+                }
+                Serial.println();
+#endif
+
 }
 
 //--------------------------------------------------------------------------------------
@@ -192,6 +240,16 @@ void loop()
         lastButtonState = 0;
     }
     
+    
+
+#if defined(ADC_PIN)
+   int val = analogRead(ADC_PIN);
+   
+   //0-1023 convert to 0.2..5
+   dynFactor = (val / 1023) * (5-0.2)  + 0.2;
+#endif
+  
+    
     // All this is used for communication with GUI 
     //
     if (Serial.available()>0)  {
@@ -203,37 +261,32 @@ void loop()
 #endif
             // If string ends with "CH" it's channel configuration, that have been received.
             // String must always be 12 chars/bytes and ending with CH to be valid. 
-            if (serial_index == 14 &&
-                serial_data[serial_index-2] == 'C' &&
-                serial_data[serial_index-1] == 'H' )
-            {
-                // To keep it simple, we will not let the channels be 0-initialized, but
-                // start from 1 to match actual channels. 
+            if (serial_index == 14 && tail_cmp("CH"))  {               // To keep it simple, we will not let the channels be 0-initialized, but
+							                // start from 1 to match actual channels. 
                 for (unsigned char i = 0; i < 13; i++) {
                     channel_mapping[i + 1] = serial_data[i] - 48;
                   
                     // Update the dedicated PPM-in -> PPM-out array for faster performance.
                     if ((serial_data[i] - 48) < 14) {
-                        PpmIn_PpmOut[serial_data[i]-48] = i + 1;
+                        sets.PpmIn_PpmOut[serial_data[i]-48] = i + 1;
                     }
                 }
                
                 Serial.printf_P(PSTR("Channel mapping received\n"));
-               
+
                // Reset serial_index and serial_started
                serial_index = 0;
                string_started = 0;
             }
             
             // Configure headtracker
-            else if (serial_data[serial_index-2] == 'H' &&
-                     serial_data[serial_index-1] == 'E')  {
+            else if (tail_cmp("HE"))  {
                 // HT parameters are passed in from the PC in this order:
                 //
                 // 0 tiltRollBeta      
                 // 1 panBeta       
                 // 2 gyroWeightTiltRoll    
-                // 3 GyroWeightPan 
+                // 3 gyroWeightPan 
                 // 4 tiltFactor        
                 // 5 panFactor          
                 // 6 rollFactor
@@ -254,14 +307,15 @@ void loop()
                 // Parameters from the PC client need to be scaled to match our local
                 // expectations
 
-                Serial.printf_P(PSTR("HT config received:\n"));
+                Serial.printf_P(PSTR("HT config received: "));
            
                 int valuesReceived[20] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-                int comma_index = 0;
 
+/*
+                int comma_index = 0;
                 for (unsigned char k = 0; k < serial_index - 2; k++) {
                     // Looking for comma
-                    if (serial_data[k] == 44) {
+                    if (serial_data[k] == ',') {
                         comma_index++;
                     } else  {
                         valuesReceived[comma_index] = valuesReceived[comma_index] * 10 + (serial_data[k] - 48);
@@ -272,61 +326,51 @@ void loop()
 #endif
                 }
 
-#if 0 &&  (DEBUG)
-                Serial.println();
-                for (unsigned char k = 0; k < comma_index+1; k++) {
-                    Serial.print(valuesReceived[k]); 
-                    Serial.write(',');
-                }
-                Serial.println();
-#endif
+*/
+		parse_data(2, valuesReceived, 20);
 
-                tiltRollBeta  = (float)valuesReceived[0] / 100;  
-                panBeta       = (float)valuesReceived[1] / 100;
-                gyroWeightTiltRoll = (float)valuesReceived[2] / 100;
-                GyroWeightPan = (float)valuesReceived[3] / 100;
-                tiltFactor    = (float)valuesReceived[4] / 10;
-                panFactor     = (float)valuesReceived[5] / 10;
-                rollFactor    = (float)valuesReceived[6] / 10;
 
-                servoReverseMask = (unsigned char)valuesReceived[7];
+                sets.tiltRollBeta  = (float)valuesReceived[0] / 100;  
+                sets.panBeta       = (float)valuesReceived[1] / 100;
+                sets.gyroWeightTiltRoll = (float)valuesReceived[2] / 100;
+                sets.gyroWeightPan = (float)valuesReceived[3] / 100;
+                sets.tiltFactor    = (float)valuesReceived[4] / 10;
+                sets.panFactor     = (float)valuesReceived[5] / 10;
+                sets.rollFactor    = (float)valuesReceived[6] / 10;
 
-                tiltInverse = 1;
-                rollInverse = 1;
-                panInverse = 1;           
+                sets.servoReverseMask = (unsigned char)valuesReceived[7];
+
+                if(sets.servoReverseMask & HT_PAN_REVERSE_BIT) 
+                    sets.panFactor *= -1;
                 
-                if ((servoReverseMask & HT_PAN_REVERSE_BIT) != 0)
-                {
-                    panInverse = -1;
-                }
-                if ((servoReverseMask & HT_ROLL_REVERSE_BIT) != 0)
-                {
-                    rollInverse = -1; 
-                }
-                if ((servoReverseMask & HT_TILT_REVERSE_BIT) != 0)
-                {
-                    tiltInverse = -1;
-                }
+                if(sets.servoReverseMask & HT_ROLL_REVERSE_BIT) 
+                    sets.rollFactor *= -1; 
+                
+                if(sets.servoReverseMask & HT_TILT_REVERSE_BIT) 
+                    sets.tiltFactor *= -1;
+                
 
-                servoPanCenter = valuesReceived[8];
-                panMinPulse = valuesReceived[9];
-                panMaxPulse = valuesReceived[10];
+                sets.servoPanCenter = valuesReceived[8];
+                sets.panMinPulse = valuesReceived[9];
+                sets.panMaxPulse = valuesReceived[10];
          
-                servoTiltCenter = valuesReceived[11];
-                tiltMinPulse = valuesReceived[12];
-                tiltMaxPulse = valuesReceived[13];
+                sets.servoTiltCenter = valuesReceived[11];
+                sets.tiltMinPulse = valuesReceived[12];
+                sets.tiltMaxPulse = valuesReceived[13];
 
-                servoRollCenter = valuesReceived[14];
-                rollMinPulse = valuesReceived[15];
-                rollMaxPulse = valuesReceived[16];
+                sets.servoRollCenter = valuesReceived[14];
+                sets.rollMinPulse = valuesReceived[15];
+                sets.rollMaxPulse = valuesReceived[16];
      
-                htChannels[0] = valuesReceived[17];
-                htChannels[1] = valuesReceived[18];
-                htChannels[2] = valuesReceived[19];
+                sets.htChannels[0] = valuesReceived[17];
+                sets.htChannels[1] = valuesReceived[18];
+                sets.htChannels[2] = valuesReceived[19];
 
-                Serial.println(htChannels[0]);
-                Serial.println(htChannels[1]);
-                Serial.println(htChannels[2]);
+#if 0 &&  (DEBUG)
+                Serial.println(sets.htChannels[0]);
+                Serial.println(sets.htChannels[1]);
+                Serial.println(sets.htChannels[2]);
+#endif
 
                 SaveSettings();
 
@@ -335,34 +379,21 @@ void loop()
             } // end configure headtracker
 
             // Debug info
-            else if (serial_data[serial_index-5] == 'D' &&
-                     serial_data[serial_index-4] == 'E' &&
-                     serial_data[serial_index-3] == 'B' &&
-                     serial_data[serial_index-2] == 'U' &&
-                     serial_data[serial_index-1] == 'G')
-            {  
+            else if (tail_cmp("DEBUG")) {
                 DebugOutput();
                 serial_index = 0;
                 string_started = 0; 
             }
 
             // Firmware version requested
-            else if (serial_data[serial_index-4] == 'V' &&
-                     serial_data[serial_index-3] == 'E' &&
-                     serial_data[serial_index-2] == 'R' &&
-                     serial_data[serial_index-1] == 'S')
-            {
-                Serial.printf_P(PSTR("FW: %S"), FIRMWARE_VERSION_FLOAT);
+            else if (tail_cmp("VERS")) {
+                Serial.printf_P(PSTR("FW: %S\n"), FIRMWARE_VERSION_FLOAT);
                 serial_index = 0;
                 string_started = 0; 
             }
           
             // Start mag and accel data stream
-            else if (serial_data[serial_index-4] == 'C' &&
-                     serial_data[serial_index-3] == 'M' &&
-                     serial_data[serial_index-2] == 'A' &&
-                     serial_data[serial_index-1] == 'S')
-            {  
+            else if (tail_cmp("CMAS"))  {  
                 outputMagAcc = 1;
                 outputMag = 0;
                 outputAcc = 0;
@@ -372,11 +403,7 @@ void loop()
             }        
 
             // Stop mag and accel data stream
-            else if (serial_data[serial_index-4] == 'C' &&
-                     serial_data[serial_index-3] == 'M' &&
-                     serial_data[serial_index-2] == 'A' &&
-                     serial_data[serial_index-1] == 'E')
-            {  
+            else if (tail_cmp("CMAE")) {
                 outputMagAcc = 0;
                 outputMag = 0;
                 outputTrack = 0;
@@ -386,11 +413,7 @@ void loop()
             }        
 
             // Start magnetometer data stream
-            else if (serial_data[serial_index-4] == 'C' &&
-                     serial_data[serial_index-3] == 'A' &&
-                     serial_data[serial_index-2] == 'S' &&
-                     serial_data[serial_index-1] == 'T')
-            {  
+            else if (tail_cmp("CAST")) {  
                 outputMag = 1;
                 outputMagAcc = 0;
                 outputAcc = 0;
@@ -401,10 +424,7 @@ void loop()
             }        
           
             // Stop magnetometer data stream
-            else if (serial_data[serial_index-4] == 'C' &&
-                     serial_data[serial_index-3] == 'A' &&
-                     serial_data[serial_index-2] == 'E' &&
-                     serial_data[serial_index-1] == 'N')
+            else if (tail_cmp("CAEN"))
             {  
                 outputMag = 0;
                 outputMagAcc = 0;
@@ -415,11 +435,7 @@ void loop()
             }
 
             // Start accelerometer data stream
-            else if (serial_data[serial_index-4] == 'G' &&
-                     serial_data[serial_index-3] == 'R' &&
-                     serial_data[serial_index-2] == 'A' &&
-                     serial_data[serial_index-1] == 'V')
-            {  
+            else if (tail_cmp("GRAV")) {
                 outputAcc = 1;     
                 outputMagAcc = 0;
                 outputMag = 0;
@@ -429,11 +445,7 @@ void loop()
             }              
           
             // Stop accelerometer data stream
-            else if (serial_data[serial_index-4] == 'G' &&
-                     serial_data[serial_index-3] == 'R' &&
-                     serial_data[serial_index-2] == 'E' &&
-                     serial_data[serial_index-1] == 'N')
-            {  
+            else if (tail_cmp("GREN")) {
                 outputAcc = 0;
                 outputMag = 0;
                 outputMagAcc = 0;
@@ -443,11 +455,7 @@ void loop()
             }
 
             // Start tracking data stream
-            else if (serial_data[serial_index-4] == 'P' &&
-                     serial_data[serial_index-3] == 'L' &&
-                     serial_data[serial_index-2] == 'S' &&
-                     serial_data[serial_index-1] == 'T')
-            {  
+            else if (tail_cmp("PLST")) {
                 outputTrack = 1;
                 outputMagAcc = 0;
                 outputMag = 0;
@@ -456,12 +464,8 @@ void loop()
                 string_started = 0; 
             }        
 
-            // Stop tracking data stream          
-            else if (serial_data[serial_index-4] == 'P' &&
-                     serial_data[serial_index-3] == 'L' &&
-                     serial_data[serial_index-2] == 'E' &&
-                     serial_data[serial_index-1] == 'N')
-            {  
+            // Stop tracking data stream
+            else if (tail_cmp("PLEN")) {
                 outputTrack = 0;
                 outputMag = 0;
                 outputAcc = 0;
@@ -469,138 +473,110 @@ void loop()
                 serial_index = 0;
                 string_started = 0; 
             }
-#if 0 && DEBUG
-            else if (serial_data[serial_index-4] == 'D' &&
-                     serial_data[serial_index-3] == 'B' &&
-                     serial_data[serial_index-2] == 'G' &&
-                     serial_data[serial_index-1] == '1')
-            {  
-                outputDbg = 1;
-                serial_index = 0;
-                string_started = 0; 
-            }        
 
-            else if (serial_data[serial_index-4] == 'D' &&
-                     serial_data[serial_index-3] == 'B' &&
-                     serial_data[serial_index-2] == 'G' &&
-                     serial_data[serial_index-1] == '2')
-            {  
-                outputDbg = 2;
-                serial_index = 0;
-                string_started = 0; 
-            }        
-
-
-            else if (serial_data[serial_index-4] == 'D' &&
-                     serial_data[serial_index-3] == 'B' &&
-                     serial_data[serial_index-2] == 'G' &&
-                     serial_data[serial_index-1] == '3')
-            {  
-                outputDbg = 3;
-                serial_index = 0;
-                string_started = 0; 
-            }        
-
-
-            else if (serial_data[serial_index-4] == 'D' &&
-                     serial_data[serial_index-3] == 'B' &&
-                     serial_data[serial_index-2] == 'G' &&
-                     serial_data[serial_index-1] == '4')
-            {  
-                outputDbg = 4;
-                serial_index = 0;
-                string_started = 0; 
-            }        
-
-
-            // Stop debug data stream          
-            else if (serial_data[serial_index-4] == 'D' &&
-                     serial_data[serial_index-3] == 'B' &&
-                     serial_data[serial_index-2] == 'G' &&
-                     serial_data[serial_index-1] == 'E')
-            {  
-        	outputDbg=0;
-                serial_index = 0;
-                string_started = 0; 
-            }
-#endif
             // reset center - like button press
-            else if (serial_data[serial_index-4] == 'R' &&
-                     serial_data[serial_index-3] == 'E' &&
-                     serial_data[serial_index-2] == 'S' &&
-                     serial_data[serial_index-1] == 'E')
-            {  
+            else if (tail_cmp("RESE")) {
                 resetValues=1;
                 serial_index = 0;
                 string_started = 0; 
+                Serial.printf_P(PSTR("Center set!"));
             }          
 
             // Save RAM settings to EEPROM
-            else if (serial_data[serial_index-4] == 'S' &&
-                     serial_data[serial_index-3] == 'A' &&
-                     serial_data[serial_index-2] == 'V' &&
-                     serial_data[serial_index-1] == 'E')
-            {  
-                SaveSettings();     
+            else if (tail_cmp("SAVE")) {
+                SaveSettings();
                 serial_index = 0;
                 string_started = 0; 
             }          
 
           
             // Calibrate gyro
-            else if (serial_data[serial_index-4] == 'C' &&
-                     serial_data[serial_index-3] == 'A' &&
-                     serial_data[serial_index-2] == 'L' &&
-                     serial_data[serial_index-1] == 'G')
-            { 
-                SetGyroOffset();
+            else if (tail_cmp("CALG")) { 
+                //SetGyroOffset(); - uses delay() so should be before reinit Timer0
 //              SaveSettings();
                
-		Serial.printf_P(PSTR("Gyro offset measured: %f,%f,%f\n"), gyroOff[0], gyroOff[1], gyroOff[2]);
+		Serial.printf_P(PSTR("Gyro offset measured: %f,%f,%f\n"), sets.gyroOff[0], sets.gyroOff[1], sets.gyroOff[2]);
 
                 serial_index = 0;
                 string_started = 0; 
             }
 
+#if DEBUG
+            else if (tail_cmp("DBG1"))  {  
+                outputDbg = 1;
+                serial_index = 0;
+                string_started = 0; 
+            }        
+
+            else if (tail_cmp("DBG2"))  {  
+                outputDbg = 2;
+                serial_index = 0;
+                string_started = 0; 
+            }        
+
+
+            else if (tail_cmp("DBG3")) {
+                outputDbg = 3;
+                serial_index = 0;
+                string_started = 0; 
+            }
+
+
+            else if (tail_cmp("DBG4")) {
+                outputDbg = 4;
+                serial_index = 0;
+                string_started = 0; 
+            }        
+
+
+            // Stop debug data stream 
+            else if (tail_cmp("DBGE")) {  
+        	outputDbg=0;
+                serial_index = 0;
+                string_started = 0; 
+            }
+#endif
+
             // Store magnetometer offset
-            else if (serial_data[serial_index-3] == 'M' &&
-                     serial_data[serial_index-2] == 'A' &&
-                     serial_data[serial_index-1] == 'G')
-            {
+            else if (tail_cmp("MAG")) {
                 Serial.println(serial_data);
                 int valuesReceived[5] = {0,0,0,0,0};
+/*
                 int comma_index = 0;
               
                 for (unsigned char k = 0; k < serial_index - 3; k++) {
                     // Looking for comma
-                    if (serial_data[k] == 44) {
+                    if (serial_data[k] == ',') {
                         comma_index++;
                     } else  {
                         valuesReceived[comma_index] = valuesReceived[comma_index] * 10 + (serial_data[k] - 48);
                     }
                 }
-                
+*/
+
+		parse_data(3, valuesReceived, 5);
+
+
                 // Y and Z are swapped on purpose.
-                magOffset[0] = valuesReceived[0] - 2000;
-                magOffset[1] = valuesReceived[2] - 2000;
-                magOffset[2] = valuesReceived[1] - 2000;
+                sets.magOffset[0] = valuesReceived[0] - 2000;
+                sets.magOffset[1] = valuesReceived[2] - 2000;
+                sets.magOffset[2] = valuesReceived[1] - 2000;
 
                 serial_index = 0;
                 string_started = 0; 
 
                 SaveMagData();                
 #if DEBUG
-		Serial.printf_P(PSTR("Mag offset stored %f,%f,%f\n"),  magOffset[0], magOffset[1], magOffset[2]);
+		Serial.printf_P(PSTR("Mag offset stored %f,%f,%f\n"),  sets.magOffset[0], sets.magOffset[1], sets.magOffset[2]);
 #endif
             }
 
             // Store accelerometer offset
-            else if (serial_data[serial_index-3] == 'A' &&
-                     serial_data[serial_index-2] == 'C' &&
-                     serial_data[serial_index-1] == 'C')
-            {
+            else if (tail_cmp("ACC")) {
                 Serial.println(serial_data);
                 int valuesReceived[5] = {0,0,0,0,0};
+
+/*
                 int comma_index = 0; 
                 for (unsigned char k = 0; k < serial_index - 3; k++) {
                     // Looking for comma
@@ -610,73 +586,71 @@ void loop()
                         valuesReceived[comma_index] = valuesReceived[comma_index] * 10 + (serial_data[k] - 48);
                     }              
                 }
+*/
+		parse_data(3, valuesReceived, 5);
 
-                accOffset[0] = valuesReceived[0] - 2000;
-                accOffset[1] = valuesReceived[1] - 2000;
-                accOffset[2] = valuesReceived[2] - 2000;
+                sets.accOffset[0] = valuesReceived[0] - 2000;
+                sets.accOffset[1] = valuesReceived[1] - 2000;
+                sets.accOffset[2] = valuesReceived[2] - 2000;
                 
                 serial_index = 0;
                 string_started = 0; 
 
-                SaveAccelData();                
+                SaveAccelData();
 #if DEBUG
-		Serial.printf_P(PSTR("Acc offset stored %d,%d,%d\n"),  accOffset[0], accOffset[1], accOffset[2]);
+		Serial.printf_P(PSTR("Acc offset stored %d,%d,%d\n"),  sets.accOffset[0], sets.accOffset[1], sets.accOffset[2]);
 #endif
             }
 
             // Retrieve settings
-            else if (serial_data[serial_index-4] == 'G' &&
-                     serial_data[serial_index-3] == 'S' &&
-                     serial_data[serial_index-2] == 'E' &&
-                     serial_data[serial_index-1] == 'T' )
-            {
+            else if (tail_cmp("GSET")) {
                 // Get Settings. Scale our local values to
                 // real-world values usable on the PC side.
                 //
                 Serial.printf_P(PSTR("$SET$")); // something recognizable in the stream
 
 		char c=',';
-                Serial.print(tiltRollBeta * 100);
+                Serial.print(sets.tiltRollBeta * 100);
                 Serial.write(c);
-                Serial.print(panBeta * 100);
+                Serial.print(sets.panBeta * 100);
                 Serial.write(c);
-                Serial.print(gyroWeightTiltRoll * 100);  
+                Serial.print(sets.gyroWeightTiltRoll * 100);  
                 Serial.write(c);
-                Serial.print(GyroWeightPan * 100);
+                Serial.print(sets.gyroWeightPan * 100);
                 Serial.write(c);
-                Serial.print(tiltFactor * 10);
+                Serial.print(sets.tiltFactor * 10);
                 Serial.write(c);
-                Serial.print(panFactor * 10);
+                Serial.print(sets.panFactor * 10);
                 Serial.write(c);
-                Serial.print(rollFactor * 10);
+                Serial.print(sets.rollFactor * 10);
                 Serial.write(c);
-                Serial.print(servoReverseMask);
+                Serial.print(sets.servoReverseMask);
                 Serial.write(c);
-                Serial.print(servoPanCenter);
+                Serial.print(sets.servoPanCenter);
                 Serial.write(c);
-                Serial.print(panMinPulse);
+                Serial.print(sets.panMinPulse);
                 Serial.write(c);
-                Serial.print(panMaxPulse);
+                Serial.print(sets.panMaxPulse);
                 Serial.write(c);
-                Serial.print(servoTiltCenter);
+                Serial.print(sets.servoTiltCenter);
                 Serial.write(c);
-                Serial.print(tiltMinPulse);
+                Serial.print(sets.tiltMinPulse);
                 Serial.write(c);
-                Serial.print(tiltMaxPulse);
+                Serial.print(sets.tiltMaxPulse);
                 Serial.write(c);
-                Serial.print(servoRollCenter);
+                Serial.print(sets.servoRollCenter);
                 Serial.write(c);
-                Serial.print(rollMinPulse);
+                Serial.print(sets.rollMinPulse);
                 Serial.write(c);
-                Serial.print(rollMaxPulse);
+                Serial.print(sets.rollMaxPulse);
                 Serial.write(c);
-                Serial.print(htChannels[0]);
+                Serial.print(sets.htChannels[0]);
                 Serial.write(c);
-                Serial.print(htChannels[1]);
+                Serial.print(sets.htChannels[1]);
                 Serial.write(c);
-                Serial.println(htChannels[2]);
+                Serial.println(sets.htChannels[2]);
 
-                Serial.printf_P(PSTR("Settings Retrieved!\n"));
+//                Serial.printf_P(PSTR("Settings Retrieved!\n"));
 
                 serial_index = 0;
                 string_started = 0;
@@ -717,11 +691,12 @@ void loop()
             else if (outputMag)         calMagOutput(); 
             else if (outputAcc)         calAccOutput();
             
-#if 0 && DEBUG
+#if DEBUG
             if(outputDbg == 1)		testAccOutput();
             if(outputDbg == 2)		testGyroOutput();
             if(outputDbg == 3)		testMagOutput();
             if(outputDbg == 4)		testAllData();
+            outputDbg=0; // only once
 #endif
             
             frameNumber = 0; 
@@ -736,12 +711,16 @@ void loop()
 // Func: SaveSettings
 // Desc: Saves device settings to EEPROM for retrieval at boot-up.
 //--------------------------------------------------------------------------------------
+
 void SaveSettings()
 {  
+
+    WriteSets();
+/*
     EEPROM.write(1, (unsigned char)(tiltRollBeta * 100));
     EEPROM.write(2, (unsigned char)(panBeta * 100));
     EEPROM.write(3, (unsigned char)(gyroWeightTiltRoll * 100));
-    EEPROM.write(4, (unsigned char)(GyroWeightPan * 100));
+    EEPROM.write(4, (unsigned char)(gyroWeightPan * 100));
   
     EEPROM.write(5, (unsigned char)servoReverseMask);
     
@@ -806,10 +785,11 @@ void SaveSettings()
     // Mark the memory to indicate that it has been
     // written. Used to determine if board is newly flashed
     // or not.
-    EEPROM.write(0,8); 
-
+    EEPROM.write(0,EEPROM_VERSION); 
+*/
     Serial.printf_P(PSTR("Settings saved!\n"));
 }
+
 
 //--------------------------------------------------------------------------------------
 // Func: GetSettings
@@ -817,25 +797,14 @@ void SaveSettings()
 //--------------------------------------------------------------------------------------
 void GetSettings()
 {  
+
+/*
     tiltRollBeta    = (float)EEPROM.read(1) / 100;
     panBeta         = (float)EEPROM.read(2) / 100;
     gyroWeightTiltRoll = (float)EEPROM.read(3) / 100;
-    GyroWeightPan   = (float)EEPROM.read(4) / 100;  
+    gyroWeightPan   = (float)EEPROM.read(4) / 100;  
   
-    tiltInverse = 1;
-    rollInverse = 1;
-    panInverse = 1;
 
-    unsigned char temp = EEPROM.read(5);
-    if ( temp & HT_TILT_REVERSE_BIT ) {
-        tiltInverse = -1;
-    }  
-    if ( temp & HT_ROLL_REVERSE_BIT ) {
-        rollInverse = -1;
-    }
-    if ( temp & HT_PAN_REVERSE_BIT ) {
-        panInverse = -1;
-    }
 
     // 6 unused
 
@@ -843,6 +812,17 @@ void GetSettings()
     tiltFactor      = (float)(EEPROM.read(9) + (EEPROM.read(10) << 8)) / 10;
     panFactor       = (float)(EEPROM.read(11) + (EEPROM.read(12) << 8)) / 10;
     rollFactor       = (float)(EEPROM.read(13) + (EEPROM.read(14) << 8)) / 10;  
+
+    unsigned char temp = EEPROM.read(5);
+    if ( temp & HT_TILT_REVERSE_BIT ) {
+        tiltFactor *= -1;
+    }  
+    if ( temp & HT_ROLL_REVERSE_BIT ) {
+        rollFactor *= -1;
+    }
+    if ( temp & HT_PAN_REVERSE_BIT ) {
+        panFactor *= -1;
+    }
 
     // 15 unused
 
@@ -874,6 +854,9 @@ void GetSettings()
     accOffset[1] = EEPROM.read(208) + (EEPROM.read(209) << 8) - 2000;
     accOffset[2] = EEPROM.read(210) + (EEPROM.read(211) << 8) - 2000;
 
+*/
+    ReadSets();
+
 #if (DEBUG)
     DebugOutput();
 #endif
@@ -885,6 +868,7 @@ void GetSettings()
 //--------------------------------------------------------------------------------------
 void SaveMagData()
 {
+/*
     int temp = (int)(magOffset[0] + 2000);
     EEPROM.write(200, (unsigned char)temp);
     EEPROM.write(201, (unsigned char)(temp >> 8));
@@ -896,8 +880,10 @@ void SaveMagData()
     temp = (int)(magOffset[2] + 2000);
     EEPROM.write(204, (unsigned char)temp);
     EEPROM.write(205, (unsigned char)(temp >> 8));
-  
-    Serial.printf_P(PSTR("Mag offset saved!\n%f,%f,%f\n"),  magOffset[0], magOffset[1], magOffset[2]);
+ */
+    WriteSets(offsetof(settings, magOffset ), sizeof(sets.magOffset));
+ 
+    Serial.printf_P(PSTR("Mag offset saved!\n%f,%f,%f\n"),  sets.magOffset[0], sets.magOffset[1], sets.magOffset[2]);
 }
 
 //--------------------------------------------------------------------------------------
@@ -906,6 +892,7 @@ void SaveMagData()
 //--------------------------------------------------------------------------------------
 void SaveAccelData()
 {
+/*
     int temp = (int)(accOffset[0] + 2000);
     EEPROM.write(206, (unsigned char)temp);
     EEPROM.write(207, (unsigned char)(temp >> 8));   
@@ -917,8 +904,10 @@ void SaveAccelData()
     temp = (int)(accOffset[2] + 2000);
     EEPROM.write(210, (unsigned char)temp);
     EEPROM.write(211, (unsigned char)(temp >> 8));   
-  
-    Serial.printf_P(PSTR("Acc offset saved!\n%d,%d,%d\n"), accOffset[0], accOffset[1], accOffset[2]);
+ */
+     WriteSets(offsetof(settings, accOffset ), sizeof(sets.accOffset));
+
+    Serial.printf_P(PSTR("Acc offset saved!\n%d,%d,%d\n"), sets.accOffset[0], sets.accOffset[1], sets.accOffset[2]);
 }
 
 //--------------------------------------------------------------------------------------
@@ -929,34 +918,58 @@ void DebugOutput()
 {
     Serial.printf_P(PSTR("\n\n\n------ Debug info------\n"));
 
-/*
+
     Serial.printf_P(PSTR("FW Version: %S"),FIRMWARE_VERSION_FLOAT);
 
     Serial.printf_P(PSTR("Mag type: %i\n"), compass);
     
-    Serial.printf_P(PSTR("tiltRollBeta: %f\n"),tiltRollBeta);
+    Serial.printf_P(PSTR("tiltRollBeta: %f\n"),sets.tiltRollBeta);
 
 
-    Serial.printf_P(PSTR("panBeta: %f\n"),panBeta);
+    Serial.printf_P(PSTR("panBeta: %f\n"),sets.panBeta);
  
-    Serial.printf_P(PSTR("gyroWeightTiltRoll: %f\n"),gyroWeightTiltRoll);
-    Serial.printf_P(PSTR("GyroWeightPan: %f\n"), GyroWeightPan); 
-    Serial.printf_P(PSTR("servoPanCenter: %d\n"),servoPanCenter); 
-    Serial.printf_P(PSTR("servoTiltCenter: %d\n"),servoTiltCenter); 
-    Serial.printf_P(PSTR("servoRollCenter: %d\n"), servoRollCenter); 
+    Serial.printf_P(PSTR("gyroWeightTiltRoll: %f\n"),sets.gyroWeightTiltRoll);
+    Serial.printf_P(PSTR("GyroWeightPan: %f\n"), sets.gyroWeightPan); 
+    Serial.printf_P(PSTR("servoPanCenter: %d\n"),sets.servoPanCenter); 
+    Serial.printf_P(PSTR("servoTiltCenter: %d\n"),sets.servoTiltCenter); 
+    Serial.printf_P(PSTR("servoRollCenter: %d\n"), sets.servoRollCenter); 
 
-    Serial.printf_P(PSTR("tiltFactor: %f\n"),tiltFactor);
-    Serial.printf_P(PSTR("panFactor: %f\n"), panFactor);
-    Serial.printf_P(PSTR("rollFactor: %f\n"), rollFactor);
-*/
-    Serial.printf_P(PSTR("Gyro offset stored %f,%f,%f\n"), gyroOff[0], gyroOff[1], gyroOff[2]);
+    Serial.printf_P(PSTR("tiltFactor: %f\n"),sets.tiltFactor);
+    Serial.printf_P(PSTR("panFactor: %f\n"), sets.panFactor);
+    Serial.printf_P(PSTR("rollFactor: %f\n"), sets.rollFactor);
+
+    Serial.printf_P(PSTR("Gyro offset stored %f,%f,%f\n"), sets.gyroOff[0], sets.gyroOff[1], sets.gyroOff[2]);
  
-    Serial.printf_P(PSTR("Mag offset stored %f,%f,%f\n"),  magOffset[0], magOffset[1], magOffset[2]);
+    Serial.printf_P(PSTR("Mag offset stored %f,%f,%f\n"),  sets.magOffset[0], sets.magOffset[1], sets.magOffset[2]);
  
-    Serial.printf_P(PSTR("Acc offset stored %d,%d,%d\n"),  accOffset[0], accOffset[1], accOffset[2]);
+    Serial.printf_P(PSTR("Acc offset stored %d,%d,%d\n"),  sets.accOffset[0], sets.accOffset[1], sets.accOffset[2]);
  
     SensorInfoPrint();
 }
 
 
 
+
+void ReadSets(void){
+    int i;
+    for(i=0; i<sizeof(settings); i++)
+	((byte *)&sets)[i] = EEPROM.read( i ); // EEPROM.read(EEPROM_offs(sets) + i );
+}
+
+
+void WriteSets(void){
+    int i;
+    for(i=0; i<sizeof(settings); i++) {
+/*    Serial.print("ww_write ");
+    Serial.print( i);
+    Serial.write(' ');
+    Serial.println(((byte *)&sets)[i]); */
+	EEPROM.write( i, ((byte *)&sets)[i] ); // .write(EEPROM_offs(sets) + i,...
+    }
+}
+
+void WriteSets(int addr, int length){
+    int i;
+    for(i=addr; i<sizeof(settings) && i<length; i++)
+	EEPROM.write( i, ((byte *)&sets)[i] ); // .write(EEPROM_offs(sets) + i,...
+}

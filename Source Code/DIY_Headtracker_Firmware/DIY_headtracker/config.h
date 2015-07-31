@@ -15,7 +15,7 @@
 #define DEBUG 1
 //#define ECHO
 
-#define SAMPLERATE 61       // Samplerate of sensors (in hz, samples per second)
+#define SAMPLERATE 60     // Samplerate of sensors (in hz, samples per second)
 
 #define PPM_OUT_PIN 9// PPM out on ICP1 - pin9
 #define PPM_IN_PIN 9// PPM in on ICP1 - pin9
@@ -55,14 +55,15 @@
 
 
 // Output serial data to host evern X frames
-#define SERIAL_OUTPUT_FRAME_INTERVAL    10
+//#define SERIAL_OUTPUT_FRAME_INTERVAL    10
+#define SERIAL_OUTPUT_FRAME_INTERVAL    30
 
 // Serial communication speed. 
 #define SERIAL_BAUD 57600
 //#define SERIAL_BAUD 115200
 
 // Sensor board update-rate. Not done yet. 
-#define UPDATE_RATE 50
+//#define UPDATE_RATE 50
 
 // Dead-time between each channel in the PPM-stream. 
 #define DEAD_TIME 800

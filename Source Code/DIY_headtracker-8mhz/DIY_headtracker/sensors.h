@@ -7,8 +7,6 @@
 
 #include "Arduino.h"
 
-extern byte compass;
-
 void InitSensors();
 void WriteToI2C(int device, byte address, byte val);
 void ReadFromI2C(int device, byte address, char bytesToRead);
@@ -27,7 +25,6 @@ void CalibrateMag();
 void FilterSensorData();
 void ResetCenter();
 void SensorInfoPrint();
-void CalibrateAccel();
 
 void testAllSensors();
 void testRollOutput();
@@ -35,8 +32,5 @@ void testAllData();
 void testAccOutput();
 void testGyroOutput();
 void testMagOutput();
-void testQuatData();
-void testQuat2Data();
 
 #endif // sensors_h
-

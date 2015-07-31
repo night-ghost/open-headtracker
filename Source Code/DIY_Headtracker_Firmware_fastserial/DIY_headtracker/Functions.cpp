@@ -11,7 +11,6 @@
 #include "sensors.h"
 #include <Wire.h>
 
-extern long channel_value[];
 
 // Local variables
 unsigned int pulseTime = 0; 
@@ -19,21 +18,26 @@ unsigned int lastTime = 0;
 unsigned int timeRead; 
 int channelsDetected = 0;
 char channel = 0;
-int channelValues[20]; 
+
 char state = 0; // PPM signal high or Low?
 char read_sensors = 0;
 
 // external variables
 extern unsigned long buttonDownTime;
-extern unsigned char htChannels[];
 
 // Sensor_board,   x,y,z
 int acc_raw[3];
 int gyro_raw[3];
 int mag_raw[3];
 
-unsigned char PpmIn_PpmOut[13] = {0,1,2,3,4,5,6,7,8,9,10,11,12};
-long channel_value[13] = {2100,2100,2100,2100,2100,2100,2100,2100,2100,2100,2100,2100,2100};
+// список коммутации каналов
+//unsigned char PpmIn_PpmOut[13] = {0,1,2,3,4,5,6,7,8,9,10,11,12};
+
+long channel_value[13] = {1500,1500,1500,1500,1500,1500,1500,1500,1500,1500,1500,1500,1500};
+
+#if PPM_IN
+int channelValues[20];  // for input PPM
+#endif
 
 unsigned char channel_number = 1;
 char shift = 0;
@@ -93,7 +97,7 @@ void InitPWMInterrupt(){
 
 
 #if (DEBUG)    
-//    Serial.printf_P(PSTR("PWM interrupt initialized\n"));
+    Serial.printf_P(PSTR("PWM interrupt initialized\n"));
 #endif
 }
 
@@ -101,11 +105,12 @@ void InitPWMInterrupt(){
 // Func: InitTimerInterrupt
 // Desc: Initializes timer interrupts.
 //--------------------------------------------------------------------------------------
+
+#define PRESCALE0 1024
+#define TIMER_CLOCK_FREQ0 16000000.0/PRESCALE0 // 16MHz
+
 void InitTimerInterrupt()
 {  
-#if (DEBUG)    
-//    Serial.printf_P(PSTR("Timer interrupt initialized\n"));
-#endif
   
     TCCR0A = 
        (0 << WGM00) |
@@ -129,8 +134,20 @@ void InitTimerInterrupt()
         (1 << OCIE0A) |
         (1 << TOIE0);       
 
-    OCR0B = 64 * 2; 
-    OCR0A = 64 * 2;
+    int cnt= ((TIMER_CLOCK_FREQ0/SAMPLERATE)+0.5);
+    if(cnt>255) cnt=255;
+
+//    OCR0B = 64 * 2;.
+//    OCR0A = 64 * 2;
+    OCR0B = (byte)cnt;
+    OCR0A = (byte)cnt;
+    
+//    OCR0B = 64 * 2; 
+//    OCR0A = 64 * 2;
+
+#if (DEBUG)    
+    Serial.printf_P(PSTR("Timer interrupt initialized: %d\n"),cnt);
+#endif
 }
 
 
@@ -175,7 +192,6 @@ ISR(TIMER0_COMPA_vect){
     // Reset counter - should be changed to CTC timer mode. 
     TCNT0 = 0;
 
-#if (DEBUG == 1)  
     if (read_sensors == 1) {
         time_out++;
         if (time_out > 10) {
@@ -186,11 +202,11 @@ ISR(TIMER0_COMPA_vect){
             digitalWrite(ARDUINO_LED, HIGH);
         }
     }
-#endif
     read_sensors = 1;
     buttonDownTime += 16; // every 16 milliseconds, at 61 hz.
 }
 
+#if DEBUG
 //--------------------------------------------------------------------------------------
 // Func: TIMER1_OVF_vect
 // Desc: Timer 1 overflow vector - only here for debugging/testing, as it should always
@@ -201,12 +217,61 @@ ISR(TIMER1_OVF_vect)
     Serial.printf_P(PSTR("Timer 1 OVF\n"));
 }
 
+#endif
+
 //--------------------------------------------------------------------------------------
 // Func: TIMER1_COMPA_vect
 // Desc: Timer 1 compare A vector
 //--------------------------------------------------------------------------------------
 ISR(TIMER1_COMPA_vect)
 {
+
+#if 1
+  static boolean state = true;
+  
+  TCNT1 = 0;
+  
+  if(state) {  //start pulse
+     TCCR1A = 
+            (0 << WGM10) |
+            (0 << WGM11) |
+            (0 << COM1A1) |
+            (POSITIVE_SHIFT_PPM << COM1A0) |
+            (0 << COM1B1) |
+            (0 << COM1B0); 
+ 
+    
+    OCR1A = DEAD_TIME;
+    state = false;
+  }
+  else{  //end pulse and calculate when to start the next pulse
+    static byte cur_chan_numb=0;
+    static unsigned int calc_rest=0;
+   
+            TCCR1A = 
+            (0 << WGM10) |
+            (0 << WGM11) |
+            (1 << COM1A1) |
+            (1 << COM1A0) |
+            (0 << COM1B1) |
+            (0 << COM1B0);  
+    
+    state = true;
+
+    if(cur_chan_numb >= NUMBER_OF_CHANNELS){
+      cur_chan_numb = 1;
+      calc_rest += DEAD_TIME;// 
+      OCR1A = (FRAME_LENGTH - calc_rest);
+      calc_rest = 0;
+    } else{
+      OCR1A = (channel_value[cur_chan_numb] - DEAD_TIME);
+      calc_rest += channel_value[cur_chan_numb];
+      cur_chan_numb++;
+    }     
+  }
+
+ 
+#else
     if (OCR1A == FRAME_LENGTH) {
         TCCR1A = 
             (0 << WGM10) |
@@ -246,8 +311,11 @@ ISR(TIMER1_COMPA_vect)
             TCCR1B |= (1 << WGM12);
         }
     }
+#endif
 }  
 
+
+#if PPM_IN
 
 //--------------------------------------------------------------------------------------
 // Func: DetectPPM
@@ -263,16 +331,17 @@ void DetectPPM(){
         channel = 0; 
     }  else if (channel < 20 && pulseTime > PPM_IN_MIN && pulseTime < PPM_IN_MAX) {
         // If the pulse is recognized as servo-pulse
-        if ( (channel + 1) != htChannels[0] &&
-             (channel + 1) != htChannels[1] &&
-             (channel + 1) != htChannels[2] )  {
+        if ( (channel + 1) != sets.htChannels[0] &&
+             (channel + 1) != sets.htChannels[1] &&
+             (channel + 1) != sets.htChannels[2] )  {
             channelValues[channel++] = pulseTime;
-            channel_value[PpmIn_PpmOut[channel]] = pulseTime;
+            channel_value[sets.PpmIn_PpmOut[channel]] = pulseTime;
         }
     } else if (pulseTime > PPM_IN_MIN) {
         channel++;
     }
 }  
+
 
 //--------------------------------------------------------------------------------------
 // Func: TIMER1_CAPT_vect
@@ -307,9 +376,10 @@ ISR(TIMER1_CAPT_vect) {
     
     // If we are detecting a PPM input signal
     DetectPPM(); 
-    
+
     // Enable interrupt again:
     TIMSK1 |= (1 << ICIE1); 
 }
 
+#endif
 

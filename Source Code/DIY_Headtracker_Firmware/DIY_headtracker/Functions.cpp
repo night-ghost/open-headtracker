@@ -3,7 +3,7 @@
 // Desc: Implementations of PPM-related functions for the project.
 //-----------------------------------------------------------------------------
 
-//#include <FastSerial.h>
+#include <FastSerial.h>
 
 #include "config.h"
 #include "Arduino.h"
@@ -21,7 +21,8 @@ int channelsDetected = 0;
 char channel = 0;
 int channelValues[20]; 
 char state = 0; // PPM signal high or Low?
-char read_sensors = 0;
+char volatile read_sensors = 0;
+char volatile was_int = 0;
 
 // external variables
 extern unsigned long buttonDownTime;
@@ -101,6 +102,10 @@ void InitPWMInterrupt(){
 // Func: InitTimerInterrupt
 // Desc: Initializes timer interrupts.
 //--------------------------------------------------------------------------------------
+
+#define PRESCALE0 1024
+#define TIMER_CLOCK_FREQ0 16000000.0/PRESCALE0 // 16MHz
+
 void InitTimerInterrupt()
 {  
 #if (DEBUG)    
@@ -108,9 +113,9 @@ void InitTimerInterrupt()
 #endif
   
     TCCR0A = 
-       (0 << WGM00) |
+       (0 << WGM00) | // CTC  mode
        (1 << WGM01) |
-       (0 << COM0A1) |
+       (0 << COM0A1) | // no compare match output
        (0 << COM0A0) |
        (0 << COM0B1) |
        (0 << COM0B0);  
@@ -119,7 +124,7 @@ void InitTimerInterrupt()
     TCCR0B =
         (0 << FOC0A)| // 
         (0 << FOC0B)| // 
-        (1 << CS00) | // Prescale 1024 
+        (1 << CS00) | // Prescale 1024  - ~16kHz
         (0 << CS01) | // Prescale 1024  
         (1 << CS02) | // Prescale 1024
         (0 << WGM02);
@@ -127,10 +132,15 @@ void InitTimerInterrupt()
     TIMSK0 = 
         (0 << OCIE0B) |
         (1 << OCIE0A) |
-        (1 << TOIE0);       
+        (1 << TOIE0);
 
-    OCR0B = 64 * 2; 
-    OCR0A = 64 * 2;
+    int cnt= ((TIMER_CLOCK_FREQ0/SAMPLERATE)+0.5);
+    if(cnt>255) cnt=255;
+
+//    OCR0B = 64 * 2; 
+//    OCR0A = 64 * 2;
+    OCR0B = (byte)cnt; 
+    OCR0A = (byte)cnt;
 }
 
 
@@ -175,22 +185,22 @@ ISR(TIMER0_COMPA_vect){
     // Reset counter - should be changed to CTC timer mode. 
     TCNT0 = 0;
 
-#if (DEBUG == 1)  
     if (read_sensors == 1) {
         time_out++;
         if (time_out > 10) {
 #if DEBUG
-        Serial.println("Timing problem!!!"); 
+        Serial.println_P(PSTR("Timing problem!!!")); 
 #endif
             time_out = 0;  
             digitalWrite(ARDUINO_LED, HIGH);
         }
     }
-#endif
+    was_int=1;
     read_sensors = 1;
     buttonDownTime += 16; // every 16 milliseconds, at 61 hz.
 }
 
+#if DEBUG
 //--------------------------------------------------------------------------------------
 // Func: TIMER1_OVF_vect
 // Desc: Timer 1 overflow vector - only here for debugging/testing, as it should always
@@ -198,8 +208,10 @@ ISR(TIMER0_COMPA_vect){
 //--------------------------------------------------------------------------------------
 ISR(TIMER1_OVF_vect)
 {
-    Serial.print(PSTR("Timer 1 OVF\n"));
+    Serial.print_P(PSTR("Timer 1 OVF\n"));
 }
+
+#endif
 
 //--------------------------------------------------------------------------------------
 // Func: TIMER1_COMPA_vect
@@ -207,6 +219,53 @@ ISR(TIMER1_OVF_vect)
 //--------------------------------------------------------------------------------------
 ISR(TIMER1_COMPA_vect)
 {
+
+#if 1
+  static boolean state = true;
+  
+  TCNT1 = 0;
+  
+  if(state) {  //start pulse
+     TCCR1A = 
+            (0 << WGM10) |
+            (0 << WGM11) |
+            (0 << COM1A1) |
+            (POSITIVE_SHIFT_PPM << COM1A0) |
+            (0 << COM1B1) |
+            (0 << COM1B0); 
+ 
+    
+    OCR1A = DEAD_TIME;
+    state = false;
+  }
+  else{  //end pulse and calculate when to start the next pulse
+    static byte cur_chan_numb=0;
+    static unsigned int calc_rest=0;
+   
+            TCCR1A = 
+            (0 << WGM10) |
+            (0 << WGM11) |
+            (1 << COM1A1) |
+            (1 << COM1A0) |
+            (0 << COM1B1) |
+            (0 << COM1B0);  
+    
+    state = true;
+
+    if(cur_chan_numb >= NUMBER_OF_CHANNELS){
+      cur_chan_numb = 1;
+      calc_rest += DEAD_TIME;// 
+      OCR1A = (FRAME_LENGTH - calc_rest);
+      calc_rest = 0;
+    } else{
+      OCR1A = (channel_value[cur_chan_numb] - DEAD_TIME);
+      calc_rest += channel_value[cur_chan_numb];
+      cur_chan_numb++;
+    }     
+  }
+
+ 
+#else
     if (OCR1A == FRAME_LENGTH) {
         TCCR1A = 
             (0 << WGM10) |
@@ -246,8 +305,11 @@ ISR(TIMER1_COMPA_vect)
             TCCR1B |= (1 << WGM12);
         }
     }
+#endif
 }  
 
+
+#if PPM_IN
 
 //--------------------------------------------------------------------------------------
 // Func: DetectPPM
@@ -273,6 +335,7 @@ void DetectPPM(){
         channel++;
     }
 }  
+
 
 //--------------------------------------------------------------------------------------
 // Func: TIMER1_CAPT_vect
@@ -307,9 +370,10 @@ ISR(TIMER1_CAPT_vect) {
     
     // If we are detecting a PPM input signal
     DetectPPM(); 
-    
+
     // Enable interrupt again:
     TIMSK1 |= (1 << ICIE1); 
 }
 
+#endif
 

@@ -5,13 +5,12 @@
 //-----------------------------------------------------------------------------
 #ifndef config_h
 #define config_h
-
+#define onState 1  //set polarity of the pulses: 1 is positive, 0 is negative
 //-----------------------------------------------------------------------------
 // These are things you can change before you compile, to enable/disable
 // features.
 //
 
-// D2 - PPM input pin
 // Set to 1 to enable PPM input, 0 to disable. 
 #define PPM_IN  0
 
@@ -54,10 +53,10 @@
 #define UPDATE_RATE 50
 
 // Dead-time between each channel in the PPM-stream. 
-#define DEAD_TIME 800
+#define DEAD_TIME 300
 
 // Sets the frame-length .
-#define FRAME_LENGTH (5003 + NUMBER_OF_CHANNELS * 5000)
+#define FRAME_LENGTH 22500
 
 // TOP (timer rollover) used for PPM pulse time measurement
 #define TOP (5003 + NUMBER_OF_CHANNELS * 5000)

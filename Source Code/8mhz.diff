@@ -1,0 +1,396 @@
+diff -BburpN DIY_Headtracker_Firmware_orig/DIY_headtracker/config.h DIY_headtracker-8mhz/DIY_headtracker/config.h
+--- DIY_Headtracker_Firmware_orig/DIY_headtracker/config.h	2015-07-10 15:09:27.061288576 +0500
++++ DIY_headtracker-8mhz/DIY_headtracker/config.h	2015-04-28 12:42:32.789844650 +0500
+@@ -5,7 +5,7 @@
+ //-----------------------------------------------------------------------------
+ #ifndef config_h
+ #define config_h
+-
++#define onState 1  //set polarity of the pulses: 1 is positive, 0 is negative
+ //-----------------------------------------------------------------------------
+ // These are things you can change before you compile, to enable/disable
+ // features.
+@@ -53,10 +53,10 @@
+ #define UPDATE_RATE 50
+ 
+ // Dead-time between each channel in the PPM-stream. 
+-#define DEAD_TIME 800
++#define DEAD_TIME 300
+ 
+ // Sets the frame-length .
+-#define FRAME_LENGTH (5003 + NUMBER_OF_CHANNELS * 5000)
++#define FRAME_LENGTH 22500
+ 
+ // TOP (timer rollover) used for PPM pulse time measurement
+ #define TOP (5003 + NUMBER_OF_CHANNELS * 5000)
+diff -BburpN DIY_Headtracker_Firmware_orig/DIY_headtracker/DIY_headtracker.ino DIY_headtracker-8mhz/DIY_headtracker/DIY_headtracker.ino
+--- DIY_Headtracker_Firmware_orig/DIY_headtracker/DIY_headtracker.ino	2015-07-10 15:15:30.901253459 +0500
++++ DIY_headtracker-8mhz/DIY_headtracker/DIY_headtracker.ino	2015-04-28 12:42:32.789844650 +0500
+@@ -666,6 +669,7 @@ void loop()
+         // Only output this data every X frames.
+         if (frameNumber++ >= SERIAL_OUTPUT_FRAME_INTERVAL)
+         {
++            //PrintPPM();
+             if (outputTrack == 1)
+             {
+                 trackerOutput();
+diff -BburpN DIY_Headtracker_Firmware_orig/DIY_headtracker/eeprom.c DIY_headtracker-8mhz/DIY_headtracker/eeprom.c
+--- DIY_Headtracker_Firmware_orig/DIY_headtracker/eeprom.c	2015-04-27 14:47:47.000000000 +0500
++++ DIY_headtracker-8mhz/DIY_headtracker/eeprom.c	1970-01-01 05:00:00.000000000 +0500
+@@ -1,24 +0,0 @@
+-#include "eeprom.h"
+-
+-#if 0
+-
+-void ReadSets(void){
+-    for(int i=0; i<sizeof(Settings); i++)
+-	((byte *)&sets)[i] = EEPROM.read( i ); // EEPROM.read(EEPROM_offs(sets) + i );
+-}
+-
+-
+-void WriteSets(void){
+-    for(int i=0; i<sizeof(Settings); i++)
+-	EEPROM.write( i, ((byte *)&sets)[i] ); // .write(EEPROM_offs(sets) + i,...
+-}
+-
+-void WriteSets(int addr, int length){
+-    for(int i=addr; i<sizeof(Settings) && i<length; i++)
+-	EEPROM.write( i, ((byte *)&sets)[i] ); // .write(EEPROM_offs(sets) + i,...
+-}
+-
+-
+-
+-
+-#endif
+diff -BburpN DIY_Headtracker_Firmware_orig/DIY_headtracker/eeprom.h DIY_headtracker-8mhz/DIY_headtracker/eeprom.h
+--- DIY_Headtracker_Firmware_orig/DIY_headtracker/eeprom.h	2015-04-27 14:47:57.000000000 +0500
++++ DIY_headtracker-8mhz/DIY_headtracker/eeprom.h	1970-01-01 05:00:00.000000000 +0500
+@@ -1,41 +0,0 @@
+-#include <Arduino.h>
+-
+-struct Settings {
+-    byte vers; // 8
+-
+-    float tiltRollBeta;
+-    float panBeta;
+-    float gyroWeightTiltRoll;
+-    float gyroWeightPan;
+-    byte servoReverseMask;
+-    
+-    byte pad_6; // 6 unused
+-  
+-    int iServoPanCenter;
+-  
+-    float tiltFactor;
+-    float panFactor;
+-    float rollFactor;
+-
+-    byte pad_15;// 15 unused
+-
+-    int servoTiltCenter;
+-    int servoRollCenter;
+-
+-    int panMaxPulse;
+-    int panMinPulse;
+-
+-    int tiltMaxPulse;
+-    int tiltMinPulse;
+-    
+-    int rollMaxPulse;
+-    int rollMinPulse;
+-  
+-    byte htChannels[3];
+-  
+-    // Saving gyro calibration values
+-    float gyroOff[3]; // 35
+-    float magOffset[3];
+-    float accOffset[3];
+-};
+-
+diff -BburpN DIY_Headtracker_Firmware_orig/DIY_headtracker/Functions.cpp DIY_headtracker-8mhz/DIY_headtracker/Functions.cpp
+--- DIY_Headtracker_Firmware_orig/DIY_headtracker/Functions.cpp	2015-07-10 15:14:56.117161213 +0500
++++ DIY_headtracker-8mhz/DIY_headtracker/Functions.cpp	2015-04-28 12:42:32.789844650 +0500
+@@ -30,7 +30,7 @@ int gyro_raw[3] = {4,5,6};
+ int mag_raw[3]  = {7,8,9};
+ 
+ unsigned char PpmIn_PpmOut[13] = {0,1,2,3,4,5,6,7,8,9,10,11,12};
+-long channel_value[13] = {2100,2100,2100,2100,2100,2100,2100,2100,2100,2100,2100,2100,2100};
++long channel_value[13] = {1500,1500,1500,1500,1500,1500,1500,1500,1500,1500,1500,1500,1500};
+ 
+ unsigned char channel_number = 1;
+ char shift = 0;
+@@ -73,7 +76,7 @@ void InitPWMInterrupt()
+         (1 << ICNC1)| // Input capture noise canceler - set to active 
+         (1 << ICES1)| // Input capture edge select. 1 = rising, 0 = falling. We will toggle this, doesn't matter what it starts at        
+         (0 << CS10) | // Prescale 8  
+-        (1 << CS11) | // Prescale 8  
++        (1 << CS11) | // Prescale 8  .5micro@16mhz/.25
+         (0 << CS12) | // Prescale 8
+         (0 << WGM13)|    
+         (1 << WGM12); // CTC mode (Clear timer on compare match) with ICR1 as top.           
+@@ -126,8 +129,8 @@ void InitTimerInterrupt()
+         (1 << OCIE0A) |
+         (1 << TOIE0);       
+ 
+-    OCR0B = 64 * 2; 
+-    OCR0A = 64 * 2;
++    OCR0B = 64; //*2
++    OCR0A = 64; //*2
+ }
+ 
+ //--------------------------------------------------------------------------------------
+@@ -146,55 +149,51 @@ ISR(TIMER1_OVF_vect)
+ //--------------------------------------------------------------------------------------
+ ISR(TIMER1_COMPA_vect)
+ {
+-    if (OCR1A == FRAME_LENGTH)
+-    {
++  static boolean state = true;
++  
++  TCNT1 = 0;
++  
++  if(state) {  //start pulse
+         TCCR1A = 
+             (0 << WGM10) |
+             (0 << WGM11) |
+-            (1 << COM1A1) |
+-            (1 << COM1A0) |
++                (0 << COM1A1) |
++                (POSITIVE_SHIFT_PPM << COM1A0) |
+             (0 << COM1B1) |
+             (0 << COM1B0);   
+   
+-        channel_number = 1;
+-        OCR1A = DEAD_TIME;
+   
+-        TCCR1B &= ~(1 << WGM12);
++    OCR1A = DEAD_TIME;
++    state = false;
+     }
+-    else
+-    {
+-        if (channel_number == 1)
+-        {
+-            // After first time, when pin have been set high, we toggle the pin at each interrupt
++  else{  //end pulse and calculate when to start the next pulse
++    static byte cur_chan_numb;
++    static unsigned int calc_rest;
++   
+             TCCR1A = 
+                 (0 << WGM10) |
+                 (0 << WGM11) |
+-                (0 << COM1A1) |
+-                (POSITIVE_SHIFT_PPM << COM1A0) |
++            (1 << COM1A1) |
++            (1 << COM1A0) |
+                 (0 << COM1B1) |
+                 (0 << COM1B0);   
+-        }
+                   
+-        if ((channel_number - 1) < NUMBER_OF_CHANNELS * 2)
+-        {
+-            if ((channel_number-1) % 2 == 1)
+-            {
+-                OCR1A += DEAD_TIME; 
+-            }
+-            else
+-            {
+-                OCR1A += channel_value[(channel_number + 1) / 2];
+-            }
+-            channel_number++;
+-        }
+-        else
+-        {
+-            // We have to use OCR1A as top too, as ICR1 is used for input capture and OCR1B can't be
+-            // used as top. 
+-            OCR1A = FRAME_LENGTH;
+-            TCCR1B |= (1 << WGM12);
++    state = true;
++
++    if(cur_chan_numb >= NUMBER_OF_CHANNELS){
++      cur_chan_numb = 1;
++      calc_rest = calc_rest + DEAD_TIME;// 
++      OCR1A = (FRAME_LENGTH - calc_rest);
++      calc_rest = 0;
++    }
++    else{
++      OCR1A = (channel_value[cur_chan_numb] - DEAD_TIME);
++      calc_rest = calc_rest + channel_value[cur_chan_numb];
++      cur_chan_numb++;
+         }
+     }
++
++    
+ }  
+ 
+ //--------------------------------------------------------------------------------------
+diff -BburpN DIY_Headtracker_Firmware_orig/DIY_headtracker/Sensors.cpp DIY_headtracker-8mhz/DIY_headtracker/Sensors.cpp
+--- DIY_Headtracker_Firmware_orig/DIY_headtracker/Sensors.cpp	2015-07-10 15:15:10.494199340 +0500
++++ DIY_headtracker-8mhz/DIY_headtracker/Sensors.cpp	2015-04-28 12:42:32.789844650 +0500
+@@ -108,15 +108,15 @@ float tiltRollBeta = 0.75;
+ float panBeta = 0.75;
+ float gyroWeightTiltRoll = 0.98;
+ float GyroWeightPan = 0.98;
+-int servoPanCenter = 2100;
+-int servoTiltCenter = 2100;
+-int servoRollCenter = 2100;
+-int panMaxPulse = 1150;
+-int panMinPulse = 1150;
+-int tiltMaxPulse = 1150;
+-int tiltMinPulse = 1150;
+-int rollMaxPulse = 1150;
+-int rollMinPulse = 1150;
++int servoPanCenter = 1500;
++int servoTiltCenter = 1500;
++int servoRollCenter = 1500;
++int panMaxPulse = 2000;
++int panMinPulse = 1000;
++int tiltMaxPulse = 2000;
++int tiltMinPulse = 1000;
++int rollMaxPulse = 2000;
++int rollMinPulse = 1000;
+ float panFactor = 17;
+ float tiltFactor = 17;
+ float rollFactor = 17;
+@@ -477,7 +477,12 @@ void FilterSensorData()
+         panAngleLP = panAngle * panBeta + (1 - panBeta) * lastPanAngle;
+         lastPanAngle = panAngleLP;
+ 
++
++
++
+         float panAngleTemp = panAngleLP * panInverse * panFactor;
++        panAngleTemp =panAngleTemp/3;
++
+         if ( (panAngleTemp > -panMinPulse) && (panAngleTemp < panMaxPulse) )
+         {
+             temp = servoPanCenter + panAngleTemp;
+@@ -485,6 +490,9 @@ void FilterSensorData()
+         }    
+ 
+         float tiltAngleTemp = (tiltAngleLP - tiltStart) * tiltInverse * tiltFactor;
++        tiltAngleTemp =tiltAngleTemp/3;
++              
++                                
+         if ( (tiltAngleTemp > -tiltMinPulse) && (tiltAngleTemp < tiltMaxPulse) )
+         {
+             temp = servoTiltCenter + tiltAngleTemp;
+@@ -492,6 +500,8 @@ void FilterSensorData()
+         }   
+ 
+         float rollAngleTemp = (rollAngleLP - rollStart) * rollInverse * rollFactor;
++        rollAngleTemp =rollAngleTemp/3;
++
+         if ( (rollAngleTemp > -rollMinPulse) && (rollAngleTemp < rollMaxPulse) )
+         {
+             temp = servoRollCenter + rollAngleTemp;
+diff -BburpN DIY_Headtracker_Firmware_orig/HeadtrackerFirmware.vcxproj DIY_headtracker-8mhz/HeadtrackerFirmware.vcxproj
+--- DIY_Headtracker_Firmware_orig/HeadtrackerFirmware.vcxproj	2013-04-27 09:26:56.000000000 +0600
++++ DIY_headtracker-8mhz/HeadtrackerFirmware.vcxproj	1970-01-01 05:00:00.000000000 +0500
+@@ -1,77 +0,0 @@
+-﻿<?xml version="1.0" encoding="utf-8"?>
+-<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+-  <ItemGroup Label="ProjectConfigurations">
+-    <ProjectConfiguration Include="Debug|Win32">
+-      <Configuration>Debug</Configuration>
+-      <Platform>Win32</Platform>
+-    </ProjectConfiguration>
+-    <ProjectConfiguration Include="Release|Win32">
+-      <Configuration>Release</Configuration>
+-      <Platform>Win32</Platform>
+-    </ProjectConfiguration>
+-  </ItemGroup>
+-  <ItemGroup>
+-    <ClInclude Include="DIY_headtracker\Config.h" />
+-    <ClInclude Include="DIY_headtracker\Functions.h" />
+-    <ClInclude Include="DIY_headtracker\Sensors.h" />
+-  </ItemGroup>
+-  <ItemGroup>
+-    <None Include="DIY_headtracker\DIY_headtracker.ino" />
+-  </ItemGroup>
+-  <ItemGroup>
+-    <ClCompile Include="DIY_headtracker\Functions.cpp" />
+-    <ClCompile Include="DIY_headtracker\Sensors.cpp" />
+-  </ItemGroup>
+-  <PropertyGroup Label="Globals">
+-    <ProjectGuid>{6D743D35-01EE-4DE9-B19B-240CF3E146DA}</ProjectGuid>
+-    <RootNamespace>HeadtrackerFirmware</RootNamespace>
+-  </PropertyGroup>
+-  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+-    <ConfigurationType>Application</ConfigurationType>
+-    <UseDebugLibraries>true</UseDebugLibraries>
+-    <CharacterSet>MultiByte</CharacterSet>
+-  </PropertyGroup>
+-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+-    <ConfigurationType>Application</ConfigurationType>
+-    <UseDebugLibraries>false</UseDebugLibraries>
+-    <WholeProgramOptimization>true</WholeProgramOptimization>
+-    <CharacterSet>MultiByte</CharacterSet>
+-  </PropertyGroup>
+-  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+-  <ImportGroup Label="ExtensionSettings">
+-  </ImportGroup>
+-  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+-  </ImportGroup>
+-  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+-    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+-  </ImportGroup>
+-  <PropertyGroup Label="UserMacros" />
+-  <PropertyGroup />
+-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+-    <ClCompile>
+-      <WarningLevel>Level3</WarningLevel>
+-      <Optimization>Disabled</Optimization>
+-    </ClCompile>
+-    <Link>
+-      <GenerateDebugInformation>true</GenerateDebugInformation>
+-    </Link>
+-  </ItemDefinitionGroup>
+-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+-    <ClCompile>
+-      <WarningLevel>Level3</WarningLevel>
+-      <Optimization>MaxSpeed</Optimization>
+-      <FunctionLevelLinking>true</FunctionLevelLinking>
+-      <IntrinsicFunctions>true</IntrinsicFunctions>
+-    </ClCompile>
+-    <Link>
+-      <GenerateDebugInformation>true</GenerateDebugInformation>
+-      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+-      <OptimizeReferences>true</OptimizeReferences>
+-    </Link>
+-  </ItemDefinitionGroup>
+-  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+-  <ImportGroup Label="ExtensionTargets">
+-  </ImportGroup>
+-</Project>
+\ В конце файла нет новой строки
+diff -BburpN DIY_Headtracker_Firmware_orig/HeadtrackerFirmware.vcxproj.filters DIY_headtracker-8mhz/HeadtrackerFirmware.vcxproj.filters
+--- DIY_Headtracker_Firmware_orig/HeadtrackerFirmware.vcxproj.filters	2013-04-26 14:44:22.000000000 +0600
++++ DIY_headtracker-8mhz/HeadtrackerFirmware.vcxproj.filters	1970-01-01 05:00:00.000000000 +0500
+@@ -1,15 +0,0 @@
+-﻿<?xml version="1.0" encoding="utf-8"?>
+-<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+-  <ItemGroup>
+-    <ClInclude Include="DIY_headtracker\config.h" />
+-    <ClInclude Include="DIY_headtracker\functions.h" />
+-    <ClInclude Include="DIY_headtracker\sensors.h" />
+-  </ItemGroup>
+-  <ItemGroup>
+-    <ClCompile Include="DIY_headtracker\functions.cpp" />
+-    <ClCompile Include="DIY_headtracker\sensors.cpp" />
+-  </ItemGroup>
+-  <ItemGroup>
+-    <None Include="DIY_headtracker\DIY_headtracker.ino" />
+-  </ItemGroup>
+-</Project>
+\ В конце файла нет новой строки
+diff -BburpN DIY_Headtracker_Firmware_orig/HeadtrackerFirmware.vcxproj.user DIY_headtracker-8mhz/HeadtrackerFirmware.vcxproj.user
+--- DIY_Headtracker_Firmware_orig/HeadtrackerFirmware.vcxproj.user	2013-03-13 21:27:50.000000000 +0600
++++ DIY_headtracker-8mhz/HeadtrackerFirmware.vcxproj.user	1970-01-01 05:00:00.000000000 +0500
+@@ -1,3 +0,0 @@
+-﻿<?xml version="1.0" encoding="utf-8"?>
+-<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+-</Project>
+\ В конце файла нет новой строки

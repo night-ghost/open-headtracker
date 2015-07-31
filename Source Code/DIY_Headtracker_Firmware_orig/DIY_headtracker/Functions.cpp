@@ -310,3 +310,4 @@ ISR(TIMER1_CAPT_vect)
     // Enable interrupt again:
     TIMSK1 |= (1 << ICIE1); 
 }
+

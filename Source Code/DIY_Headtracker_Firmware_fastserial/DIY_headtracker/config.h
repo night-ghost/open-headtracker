@@ -15,10 +15,15 @@
 #define DEBUG 1
 //#define ECHO
 
-#define SAMPLERATE 61       // Samplerate of sensors (in hz, samples per second)
+#define SAMPLERATE 100       // Samplerate of sensors (in hz, samples per second)
 
 #define PPM_OUT_PIN 9// PPM out on ICP1 - pin9
-#define PPM_IN_PIN 9// PPM in on ICP1 - pin9
+#define PPM_IN_PIN 2 // PPM in on ICP0 - pin2
+
+//Connect A0 (analog_0) to pin2 (middle) of a 2K potentiometer, pin1 to +VCC, pin3 to GND.
+#define ADC_PIN A0
+
+
 #define BUTTON_INPUT 11// Center/pause input button pin number
 #define ARDUINO_LED 13// Arduino LED
 #define BUZZER      4 // Pin definition for LED and buzzer (Fatshark goggles)
@@ -55,7 +60,7 @@
 
 
 // Output serial data to host evern X frames
-#define SERIAL_OUTPUT_FRAME_INTERVAL    10
+#define SERIAL_OUTPUT_FRAME_INTERVAL    20
 
 // Serial communication speed. 
 #define SERIAL_BAUD 57600
@@ -77,7 +82,7 @@
 #define ALWAYS_CAL_GYRO 0
 
 
-#define PPM_IN_MIN 1000 // 0.5 ms
+#define PPM_IN_MIN 900  // 0.5 ms
 #define PPM_IN_MAX 4000 // 2 ms
 
 // Settings stuff

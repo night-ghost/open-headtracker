@@ -6,6 +6,7 @@
 #define sensors_h
 
 #include "Arduino.h"
+#include "eeprom.h"
 
 extern byte compass;
 
@@ -35,6 +36,7 @@ void testAllData();
 void testAccOutput();
 void testGyroOutput();
 void testMagOutput();
-
+void CalcMagAngle();
+void clearSettings();
 #endif // sensors_h
 
