@@ -22,6 +22,7 @@ void SetGyroOffset();
 void testPanOutput();
 void trackerOutput();
 void calMagOutput();
+void getCompass();
 void calAccOutput(); 
 void calMagAccOutput(); // Output both mag and accel in one pass.
 void CalibrateMag();
@@ -38,5 +39,7 @@ void testGyroOutput();
 void testMagOutput();
 void CalcMagAngle();
 void clearSettings();
+void CalibrationStart();
+
 #endif // sensors_h
 

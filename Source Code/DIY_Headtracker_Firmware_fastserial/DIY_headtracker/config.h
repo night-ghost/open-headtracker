@@ -18,6 +18,9 @@
 #define SAMPLERATE 100       // Samplerate of sensors (in hz, samples per second)
 
 #define PPM_OUT_PIN 9// PPM out on ICP1 - pin9
+
+
+#define PPM_IN  1    // Set to 1 to enable PPM input, 0 to disable. 
 #define PPM_IN_PIN 2 // PPM in on ICP0 - pin2
 
 //Connect A0 (analog_0) to pin2 (middle) of a 2K potentiometer, pin1 to +VCC, pin3 to GND.
@@ -25,12 +28,10 @@
 
 
 #define BUTTON_INPUT 11// Center/pause input button pin number
-#define ARDUINO_LED 13// Arduino LED
-#define BUZZER      4 // Pin definition for LED and buzzer (Fatshark goggles)
+#define ARDUINO_LED  13// Arduino LED
+#define BUZZER       4 // Pin definition for LED and buzzer (Fatshark goggles)
 
 
-// Set to 1 to enable PPM input, 0 to disable. 
-#define PPM_IN  0
 
 // Button hold time for pause/unpause
 #define BUTTON_HOLD_PAUSE_THRESH    1500    // 1.5 second button hold required to pause/unpause tracking.

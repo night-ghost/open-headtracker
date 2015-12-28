@@ -49,10 +49,11 @@ int frameNumber = 0;		    // Frame count since last debug serial output
 char serial_data[101];          // Array for serial-data 
 unsigned char serial_index = 0; // How many bytes have been received?
 char string_started = 0;        // Only saves data if string starts with right byte
-unsigned char channel_mapping[13];
 
+/*
 char outputMag = 0;             // Stream magnetometer data to host
 char outputAcc = 0;             // Stream accelerometer data to host
+*/
 char outputMagAcc = 0;          // Stream mag and accell data (for calibration on PC)
 char outputTrack = 0;	        // Stream angle data to host
 char outputDbg=0;
@@ -69,34 +70,7 @@ extern char read_sensors;
 extern char resetValues;   
 
 // Settings (Defined in sensors.cpp)
-//
-
-/*
-extern unsigned char PpmIn_PpmOut[13];
-extern float tiltRollBeta;
-extern float panBeta;
-extern float gyroWeightTiltRoll;
-extern float gyroWeightPan;
-extern int servoPanCenter;
-extern int servoTiltCenter;
-extern int servoRollCenter;
-extern int panMaxPulse;
-extern int panMinPulse;
-extern int tiltMaxPulse;
-extern int tiltMinPulse;
-extern int rollMaxPulse;
-extern int rollMinPulse;
-extern float panFactor;
-extern float tiltFactor;  
-extern float rollFactor;
-extern unsigned char servoReverseMask;
-extern unsigned char htChannels[];
-extern float gyroOff[];
-extern float magOffset[];
-extern int accOffset[]; 
-*/
 extern settings sets;
-
 
 float dynFactor=1;
 
@@ -128,21 +102,22 @@ void setup()
 
     Wire.begin();               // Start I2C
 
+
+    byte vers=EEPROM.read(0); // first byte
+    
     // If the device have just been programmed, write initial config/values to EEPROM:
-    if (EEPROM.read(0) != EEPROM_VERSION)
-    {
+    if ( vers != EEPROM_VERSION) {
 //#if (DEBUG)
-        Serial.printf_P(PSTR("New board - saving default values!\n"));
+        Serial.printf_P(PSTR("New board (%d) - saving default values!\n"),vers);
 //#endif    
 	clearSettings();
     
         InitSensors();
-        SaveSettings();
-        SaveMagData();
-        SaveAccelData();
+        SaveSettings(); // all!
     }
  
     GetSettings();                 // Get settings saved in EEPROM
+
     InitSensors();                // Initialize I2C sensors
 //#if ALWAYS_CAL_GYRO - uses delay() so should be before reinit Timer0
     SetGyroOffset();
@@ -152,6 +127,7 @@ void setup()
 
     ResetCenter();
 //    resetValues=1;
+
 
 #if FATSHARK_HT_MODULE
     pinMode(BUZZER,OUTPUT);         // Buzzer
@@ -167,6 +143,10 @@ void setup()
 
     digitalWrite(ARDUINO_LED, LOW); //ready
 
+#if DEBUG
+//    DebugOutput(); - not works
+#endif
+
     Serial.printf_P(PSTR("$OK!$\n"));
 
 }
@@ -180,6 +160,7 @@ int tail_cmp( char *pat){
 
 void parse_data(byte off, int *valuesReceived, byte n) {
     byte comma_index = 0;
+    byte neg=0;
 
 #if DEBUG
         int *ptr0=valuesReceived;
@@ -187,21 +168,32 @@ void parse_data(byte off, int *valuesReceived, byte n) {
 
     for (byte k = 0; k < serial_index - off && comma_index < n; k++) {
 
-#if DEBUG
+#if 0 && DEBUG
         Serial.print(serial_data[k]);
 #endif
 
         // Looking for comma
         if (serial_data[k] == ',') {
+    	    if(neg){
+    		*valuesReceived = -*valuesReceived;
+    		neg=0;
+    	    }
             comma_index++;
             valuesReceived++;
+        } else if (serial_data[k] == '-') {
+    	    neg=1;
         } else  {
             *valuesReceived = *valuesReceived * 10 + (serial_data[k] - '0');
         }
     }
 
 
-#if DEBUG
+    if(neg){ // the last one
+	*valuesReceived = -*valuesReceived;
+	neg=0;
+    }
+
+#if 0 && DEBUG
                 Serial.print("\n>");
                 for (unsigned char k = 0; k < comma_index+1; k++) {
                     Serial.print(ptr0[k]); 
@@ -264,8 +256,6 @@ void loop()
             if (serial_index == 14 && tail_cmp("CH"))  {               // To keep it simple, we will not let the channels be 0-initialized, but
 							                // start from 1 to match actual channels. 
                 for (unsigned char i = 0; i < 13; i++) {
-                    channel_mapping[i + 1] = serial_data[i] - 48;
-                  
                     // Update the dedicated PPM-in -> PPM-out array for faster performance.
                     if ((serial_data[i] - 48) < 14) {
                         sets.PpmIn_PpmOut[serial_data[i]-48] = i + 1;
@@ -311,24 +301,7 @@ void loop()
            
                 int valuesReceived[20] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 
-/*
-                int comma_index = 0;
-                for (unsigned char k = 0; k < serial_index - 2; k++) {
-                    // Looking for comma
-                    if (serial_data[k] == ',') {
-                        comma_index++;
-                    } else  {
-                        valuesReceived[comma_index] = valuesReceived[comma_index] * 10 + (serial_data[k] - 48);
-                    }
-             
-#if 0 && (DEBUG)
-                    Serial.print(serial_data[k]);
-#endif
-                }
-
-*/
 		parse_data(2, valuesReceived, 20);
-
 
                 sets.tiltRollBeta  = (float)valuesReceived[0] / 100;  
                 sets.panBeta       = (float)valuesReceived[1] / 100;
@@ -394,9 +367,10 @@ void loop()
           
             // Start mag and accel data stream
             else if (tail_cmp("CMAS"))  {  
+        	CalibrationStart();
                 outputMagAcc = 1;
-                outputMag = 0;
-                outputAcc = 0;
+//                outputMag = 0;
+//                outputAcc = 0;
                 outputTrack = 0;
                 serial_index = 0;
                 string_started = 0;
@@ -405,61 +379,19 @@ void loop()
             // Stop mag and accel data stream
             else if (tail_cmp("CMAE")) {
                 outputMagAcc = 0;
-                outputMag = 0;
+//                outputMag = 0;
                 outputTrack = 0;
-                outputAcc = 0;
+//                outputAcc = 0;
                 serial_index = 0;
                 string_started = 0;
             }        
-
-            // Start magnetometer data stream
-            else if (tail_cmp("CAST")) {  
-                outputMag = 1;
-                outputMagAcc = 0;
-                outputAcc = 0;
-                outputTrack = 0;
-                serial_index = 0;
-                string_started = 0; 
-
-            }        
-          
-            // Stop magnetometer data stream
-            else if (tail_cmp("CAEN"))
-            {  
-                outputMag = 0;
-                outputMagAcc = 0;
-                outputAcc = 0;
-                outputTrack = 0;
-                serial_index = 0;
-                string_started = 0; 
-            }
-
-            // Start accelerometer data stream
-            else if (tail_cmp("GRAV")) {
-                outputAcc = 1;     
-                outputMagAcc = 0;
-                outputMag = 0;
-                outputTrack = 0;
-                serial_index = 0;
-                string_started = 0; 
-            }              
-          
-            // Stop accelerometer data stream
-            else if (tail_cmp("GREN")) {
-                outputAcc = 0;
-                outputMag = 0;
-                outputMagAcc = 0;
-                outputTrack = 0;
-                serial_index = 0;
-                string_started = 0; 
-            }
 
             // Start tracking data stream
             else if (tail_cmp("PLST")) {
                 outputTrack = 1;
                 outputMagAcc = 0;
-                outputMag = 0;
-                outputAcc = 0;
+//                outputMag = 0;
+//                outputAcc = 0;
                 serial_index = 0;
                 string_started = 0; 
             }        
@@ -467,8 +399,8 @@ void loop()
             // Stop tracking data stream
             else if (tail_cmp("PLEN")) {
                 outputTrack = 0;
-                outputMag = 0;
-                outputAcc = 0;
+//                outputMag = 0;
+//                outputAcc = 0;
                 outputMagAcc = 0;
                 serial_index = 0;
                 string_started = 0; 
@@ -491,7 +423,7 @@ void loop()
 
           
             // Calibrate gyro
-            else if (tail_cmp("CALG")) { 
+/*            else if (tail_cmp("CALG")) { 
                 //SetGyroOffset(); - uses delay() so should be before reinit Timer0
 //              SaveSettings();
                
@@ -500,7 +432,7 @@ void loop()
                 serial_index = 0;
                 string_started = 0; 
             }
-
+*/
 #if DEBUG
             else if (tail_cmp("DBG1"))  {  
                 outputDbg = 1;
@@ -528,7 +460,14 @@ void loop()
                 string_started = 0; 
             }        
 
+#if PPM_IN
+            else if (tail_cmp("DBGC")) {
+                outputDbg = 5;
+                serial_index = 0;
+                string_started = 0; 
+            }        
 
+#endif
             // Stop debug data stream 
             else if (tail_cmp("DBGE")) {  
         	outputDbg=0;
@@ -541,33 +480,43 @@ void loop()
             else if (tail_cmp("MAG")) {
                 Serial.println(serial_data);
                 int valuesReceived[5] = {0,0,0,0,0};
-/*
-                int comma_index = 0;
-              
-                for (unsigned char k = 0; k < serial_index - 3; k++) {
-                    // Looking for comma
-                    if (serial_data[k] == ',') {
-                        comma_index++;
-                    } else  {
-                        valuesReceived[comma_index] = valuesReceived[comma_index] * 10 + (serial_data[k] - 48);
-                    }
-                }
-*/
 
 		parse_data(3, valuesReceived, 5);
 
-
-                // Y and Z are swapped on purpose.
-                sets.magOffset[0] = valuesReceived[0] - 2000;
-                sets.magOffset[1] = valuesReceived[2] - 2000;
-                sets.magOffset[2] = valuesReceived[1] - 2000;
+                // Y and Z are swapped on purpose - no more!.
+                sets.magOffset[0] = valuesReceived[0]/10.0;
+                sets.magOffset[1] = valuesReceived[1]/10.0;
+                sets.magOffset[2] = valuesReceived[2]/10.0;
 
                 serial_index = 0;
                 string_started = 0; 
 
-                SaveMagData();                
+                //SaveMagData();                
+                WriteSets(offsetof(settings, magOffset ), sizeof(sets.magOffset));
 #if DEBUG
 		Serial.printf_P(PSTR("Mag offset stored %f,%f,%f\n"),  sets.magOffset[0], sets.magOffset[1], sets.magOffset[2]);
+#endif
+            }
+
+            // Store magnetometer gain
+            else if (tail_cmp("MGA")) {
+                Serial.println(serial_data);
+                int valuesReceived[5] = {0,0,0,0,0};
+
+		parse_data(3, valuesReceived, 5);
+
+                // Y and Z are swapped on purpose - no more!.
+                sets.magGain[0] = valuesReceived[0]/10000.0;
+                sets.magGain[1] = valuesReceived[1]/10000.0;
+                sets.magGain[2] = valuesReceived[2]/10000.0;
+
+                serial_index = 0;
+                string_started = 0; 
+
+                //SaveMagGain();                
+                WriteSets(offsetof(settings, magGain ), sizeof(sets.magGain));
+#if DEBUG
+		Serial.printf_P(PSTR("Mag gain stored %f,%f,%f\n"),  sets.magGain[0], sets.magGain[1], sets.magGain[2]);
 #endif
             }
 
@@ -576,29 +525,40 @@ void loop()
                 Serial.println(serial_data);
                 int valuesReceived[5] = {0,0,0,0,0};
 
-/*
-                int comma_index = 0; 
-                for (unsigned char k = 0; k < serial_index - 3; k++) {
-                    // Looking for comma
-                    if (serial_data[k] == 44) {
-                        comma_index++;
-                    } else {
-                        valuesReceived[comma_index] = valuesReceived[comma_index] * 10 + (serial_data[k] - 48);
-                    }              
-                }
-*/
 		parse_data(3, valuesReceived, 5);
 
-                sets.accOffset[0] = valuesReceived[0] - 2000;
-                sets.accOffset[1] = valuesReceived[1] - 2000;
-                sets.accOffset[2] = valuesReceived[2] - 2000;
-                
+                sets.accOffset[0] = valuesReceived[0]/10.0;
+                sets.accOffset[1] = valuesReceived[1]/10.0;
+                sets.accOffset[2] = valuesReceived[2]/10.0;
+
                 serial_index = 0;
                 string_started = 0; 
 
-                SaveAccelData();
+                //SaveAccelData();
+                WriteSets(offsetof(settings, accOffset ), sizeof(sets.accOffset));
 #if DEBUG
-		Serial.printf_P(PSTR("Acc offset stored %d,%d,%d\n"),  sets.accOffset[0], sets.accOffset[1], sets.accOffset[2]);
+		Serial.printf_P(PSTR("Acc offset stored %f,%f,%f\n"),  sets.accOffset[0], sets.accOffset[1], sets.accOffset[2]);
+#endif
+            }
+
+            // Store accelerometer gain
+            else if (tail_cmp("ACG")) {
+                Serial.println(serial_data);
+                int valuesReceived[5] = {0,0,0,0,0};
+
+		parse_data(3, valuesReceived, 5);
+
+                sets.accGain[0] = valuesReceived[0]/10000.0;
+                sets.accGain[1] = valuesReceived[1]/10000.0;
+                sets.accGain[2] = valuesReceived[2]/10000.0;
+
+                serial_index = 0;
+                string_started = 0; 
+
+//                SaveAccelGain();
+                WriteSets(offsetof(settings, accGain ), sizeof(sets.accGain));
+#if DEBUG
+		Serial.printf_P(PSTR("Acc gain stored %f,%f,%f\n"),  sets.accGain[0], sets.accGain[1], sets.accGain[2]);
 #endif
             }
 
@@ -678,7 +638,6 @@ void loop()
 
     // if "read_sensors" flag is set high, read sensors and update
     if (read_sensors == 1 && ht_paused == 0) {
-    //    UpdateSensors();
         GyroCalc();
         AccelCalc();
         MagCalc();
@@ -688,14 +647,17 @@ void loop()
         if (frameNumber++ >= SERIAL_OUTPUT_FRAME_INTERVAL) {
             if (outputTrack)            trackerOutput();
             else if (outputMagAcc)      calMagAccOutput();
-            else if (outputMag)         calMagOutput(); 
-            else if (outputAcc)         calAccOutput();
+//            else if (outputMag)         calMagOutput(); 
+//            else if (outputAcc)         calAccOutput();
             
 #if DEBUG
             if(outputDbg == 1)		testAccOutput();
             if(outputDbg == 2)		testGyroOutput();
             if(outputDbg == 3)		testMagOutput();
             if(outputDbg == 4)		testAllData();
+ #if PPM_IN
+            if(outputDbg == 5)		testPPM_in();
+ #endif
             outputDbg=0; // only once
 #endif
             
@@ -712,81 +674,9 @@ void loop()
 // Desc: Saves device settings to EEPROM for retrieval at boot-up.
 //--------------------------------------------------------------------------------------
 
-void SaveSettings()
+inline void SaveSettings()
 {  
-
     WriteSets();
-/*
-    EEPROM.write(1, (unsigned char)(tiltRollBeta * 100));
-    EEPROM.write(2, (unsigned char)(panBeta * 100));
-    EEPROM.write(3, (unsigned char)(gyroWeightTiltRoll * 100));
-    EEPROM.write(4, (unsigned char)(gyroWeightPan * 100));
-  
-    EEPROM.write(5, (unsigned char)servoReverseMask);
-    
-    // 6 unused
-  
-    EEPROM.write(7, (unsigned char)servoPanCenter);
-    EEPROM.write(8, (unsigned char)(servoPanCenter >> 8));  
-  
-    EEPROM.write(9, (unsigned char)(tiltFactor * 10));
-    EEPROM.write(10, (int)((tiltFactor * 10)) >> 8);  
-
-    EEPROM.write(11, (unsigned char) (panFactor * 10));
-    EEPROM.write(12, (int)((panFactor * 10)) >> 8);  
-
-    EEPROM.write(13, (unsigned char) (rollFactor * 10));
-    EEPROM.write(14, (int)((rollFactor * 10)) >> 8);  
-
-    // 15 unused
-
-    EEPROM.write(16, (unsigned char)servoTiltCenter);
-    EEPROM.write(17, (unsigned char)(servoTiltCenter >> 8));  
-
-    EEPROM.write(18, (unsigned char)servoRollCenter);
-    EEPROM.write(19, (unsigned char)(servoRollCenter >> 8));  
-
-
-    EEPROM.write(20, (unsigned char)panMaxPulse);
-    EEPROM.write(21, (unsigned char)(panMaxPulse >> 8));  
-  
-    EEPROM.write(22, (unsigned char)panMinPulse);
-    EEPROM.write(23, (unsigned char)(panMinPulse >> 8));    
-
-    EEPROM.write(24, (unsigned char)tiltMaxPulse);
-    EEPROM.write(25, (unsigned char)(tiltMaxPulse >> 8));    
-
-    EEPROM.write(26, (unsigned char)tiltMinPulse);
-    EEPROM.write(27, (unsigned char)(tiltMinPulse >> 8));
-
-    EEPROM.write(28, (unsigned char)rollMaxPulse);
-    EEPROM.write(29, (unsigned char)(rollMaxPulse >> 8));    
-
-    EEPROM.write(30, (unsigned char)rollMinPulse);
-    EEPROM.write(31, (unsigned char)(rollMinPulse >> 8)); 
-  
-    EEPROM.write(32, (unsigned char)htChannels[0]);
-    EEPROM.write(33, (unsigned char)htChannels[1]);
-    EEPROM.write(34, (unsigned char)htChannels[2]);
-  
-    // Saving gyro calibration values
-    int temp = (int)(gyroOff[0] + 500.5);
-    EEPROM.write(35, (unsigned char)temp);
-    EEPROM.write(36, (unsigned char)(temp >> 8));   
-  
-    temp = (int)(gyroOff[1] + 500.5);
-    EEPROM.write(37, (unsigned char)temp);
-    EEPROM.write(38, (unsigned char)(temp >> 8));     
-
-    temp = (int)(gyroOff[2] + 500.5);
-    EEPROM.write(39, (unsigned char)temp);
-    EEPROM.write(40, (unsigned char)(temp >> 8));    
-  
-    // Mark the memory to indicate that it has been
-    // written. Used to determine if board is newly flashed
-    // or not.
-    EEPROM.write(0,EEPROM_VERSION); 
-*/
     Serial.printf_P(PSTR("Settings saved!\n"));
 }
 
@@ -795,120 +685,13 @@ void SaveSettings()
 // Func: GetSettings
 // Desc: Retrieves device settings from EEPROM.
 //--------------------------------------------------------------------------------------
-void GetSettings()
+inline void GetSettings()
 {  
 
-/*
-    tiltRollBeta    = (float)EEPROM.read(1) / 100;
-    panBeta         = (float)EEPROM.read(2) / 100;
-    gyroWeightTiltRoll = (float)EEPROM.read(3) / 100;
-    gyroWeightPan   = (float)EEPROM.read(4) / 100;  
-  
-
-
-    // 6 unused
-
-    servoPanCenter  = EEPROM.read(7) + (EEPROM.read(8) << 8);
-    tiltFactor      = (float)(EEPROM.read(9) + (EEPROM.read(10) << 8)) / 10;
-    panFactor       = (float)(EEPROM.read(11) + (EEPROM.read(12) << 8)) / 10;
-    rollFactor       = (float)(EEPROM.read(13) + (EEPROM.read(14) << 8)) / 10;  
-
-    unsigned char temp = EEPROM.read(5);
-    if ( temp & HT_TILT_REVERSE_BIT ) {
-        tiltFactor *= -1;
-    }  
-    if ( temp & HT_ROLL_REVERSE_BIT ) {
-        rollFactor *= -1;
-    }
-    if ( temp & HT_PAN_REVERSE_BIT ) {
-        panFactor *= -1;
-    }
-
-    // 15 unused
-
-    servoTiltCenter = EEPROM.read(16) + (EEPROM.read(17) << 8);
-    servoRollCenter = EEPROM.read(18) + (EEPROM.read(19) << 8);  
-  
-    panMaxPulse   = EEPROM.read(20) + (EEPROM.read(21) << 8);  
-    panMinPulse   = EEPROM.read(22) + (EEPROM.read(23) << 8);    
-  
-    tiltMaxPulse  = EEPROM.read(24) + (EEPROM.read(25) << 8);
-    tiltMinPulse  = EEPROM.read(26) + (EEPROM.read(27) << 8);
-  
-    rollMaxPulse  = EEPROM.read(28) + (EEPROM.read(29) << 8);
-    rollMinPulse  = EEPROM.read(30) + (EEPROM.read(31) << 8);
-
-    htChannels[0] = EEPROM.read(32);  
-    htChannels[1] = EEPROM.read(33);  
-    htChannels[2] = EEPROM.read(34);    
-  
-    gyroOff[0] = EEPROM.read(35) + (EEPROM.read(36) << 8) - 500; 
-    gyroOff[1] = EEPROM.read(37) + (EEPROM.read(38) << 8) - 500; 
-    gyroOff[2] = EEPROM.read(39) + (EEPROM.read(40) << 8) - 500;   
-  
-    magOffset[0] = EEPROM.read(200) + (EEPROM.read(201) << 8) - 2000;
-    magOffset[1] = EEPROM.read(202) + (EEPROM.read(203) << 8) - 2000;
-    magOffset[2] = EEPROM.read(204) + (EEPROM.read(205) << 8) - 2000;
-  
-    accOffset[0] = EEPROM.read(206) + (EEPROM.read(207) << 8) - 2000;
-    accOffset[1] = EEPROM.read(208) + (EEPROM.read(209) << 8) - 2000;
-    accOffset[2] = EEPROM.read(210) + (EEPROM.read(211) << 8) - 2000;
-
-*/
     ReadSets();
-
-#if (DEBUG)
-    DebugOutput();
-#endif
 }
 
-//--------------------------------------------------------------------------------------
-// Func: SaveMagData
-// Desc: Stores magnetometer calibration info to EEPROM.
-//--------------------------------------------------------------------------------------
-void SaveMagData()
-{
-/*
-    int temp = (int)(magOffset[0] + 2000);
-    EEPROM.write(200, (unsigned char)temp);
-    EEPROM.write(201, (unsigned char)(temp >> 8));
-  
-    temp = (int)(magOffset[1] + 2000);
-    EEPROM.write(202, (unsigned char)temp);
-    EEPROM.write(203, (unsigned char)(temp >> 8));
-  
-    temp = (int)(magOffset[2] + 2000);
-    EEPROM.write(204, (unsigned char)temp);
-    EEPROM.write(205, (unsigned char)(temp >> 8));
- */
-    WriteSets(offsetof(settings, magOffset ), sizeof(sets.magOffset));
- 
-    Serial.printf_P(PSTR("Mag offset saved!\n%f,%f,%f\n"),  sets.magOffset[0], sets.magOffset[1], sets.magOffset[2]);
-}
 
-//--------------------------------------------------------------------------------------
-// Func: SaveAccelData
-// Desc: Stores accelerometer calibration data to EEPOM.
-//--------------------------------------------------------------------------------------
-void SaveAccelData()
-{
-/*
-    int temp = (int)(accOffset[0] + 2000);
-    EEPROM.write(206, (unsigned char)temp);
-    EEPROM.write(207, (unsigned char)(temp >> 8));   
-  
-    temp = (int)(accOffset[1] + 2000);
-    EEPROM.write(208, (unsigned char)temp);
-    EEPROM.write(209, (unsigned char)(temp >> 8));   
-  
-    temp = (int)(accOffset[2] + 2000);
-    EEPROM.write(210, (unsigned char)temp);
-    EEPROM.write(211, (unsigned char)(temp >> 8));   
- */
-     WriteSets(offsetof(settings, accOffset ), sizeof(sets.accOffset));
-
-    Serial.printf_P(PSTR("Acc offset saved!\n%d,%d,%d\n"), sets.accOffset[0], sets.accOffset[1], sets.accOffset[2]);
-}
 
 //--------------------------------------------------------------------------------------
 // Func: DebugOutput
@@ -922,10 +705,9 @@ void DebugOutput()
     Serial.printf_P(PSTR("FW Version: %S"),FIRMWARE_VERSION_FLOAT);
 
     Serial.printf_P(PSTR("Mag type: %i\n"), compass);
-    
+
+/*    
     Serial.printf_P(PSTR("tiltRollBeta: %f\n"),sets.tiltRollBeta);
-
-
     Serial.printf_P(PSTR("panBeta: %f\n"),sets.panBeta);
  
     Serial.printf_P(PSTR("gyroWeightTiltRoll: %f\n"),sets.gyroWeightTiltRoll);
@@ -937,13 +719,17 @@ void DebugOutput()
     Serial.printf_P(PSTR("tiltFactor: %f\n"),sets.tiltFactor);
     Serial.printf_P(PSTR("panFactor: %f\n"), sets.panFactor);
     Serial.printf_P(PSTR("rollFactor: %f\n"), sets.rollFactor);
-
+*/
     Serial.printf_P(PSTR("Gyro offset stored %f,%f,%f\n"), sets.gyroOff[0], sets.gyroOff[1], sets.gyroOff[2]);
  
     Serial.printf_P(PSTR("Mag offset stored %f,%f,%f\n"),  sets.magOffset[0], sets.magOffset[1], sets.magOffset[2]);
+    Serial.printf_P(PSTR("Mag gain stored %f,%f,%f\n"),  sets.magGain[0], sets.magGain[1], sets.magGain[2]);
  
-    Serial.printf_P(PSTR("Acc offset stored %d,%d,%d\n"),  sets.accOffset[0], sets.accOffset[1], sets.accOffset[2]);
- 
+    Serial.printf_P(PSTR("Acc offset stored %f,%f,%f\n"),  sets.accOffset[0], sets.accOffset[1], sets.accOffset[2]);
+    Serial.printf_P(PSTR("Acc gain stored %f,%f,%f\n"),  sets.accGain[0], sets.accGain[1], sets.accGain[2]);
+#if PPM_IN
+    Serial.printf_P(PSTR("Input channels detected: %d\n"),  channelsDetected);
+#endif
     SensorInfoPrint();
 }
 
@@ -958,18 +744,39 @@ void ReadSets(void){
 
 
 void WriteSets(void){
+    ht_paused=1;
+
     int i;
+//    noInterrupts();
     for(i=0; i<sizeof(settings); i++) {
-/*    Serial.print("ww_write ");
-    Serial.print( i);
-    Serial.write(' ');
-    Serial.println(((byte *)&sets)[i]); */
+#if 0 && DEBUG
+        Serial.print( i);
+        Serial.write(' ');
+        Serial.println(((byte *)&sets)[i]); 
+#endif
 	EEPROM.write( i, ((byte *)&sets)[i] ); // .write(EEPROM_offs(sets) + i,...
     }
+//    interrupts();
+    ht_paused=0;
 }
 
 void WriteSets(int addr, int length){
+    ht_paused=1;
+
+#if 0 && DEBUG
+Serial.printf_P(PSTR("WriteSets addr=%d len=%d size=%d\n"), addr, length, sizeof(settings));
+#endif
     int i;
-    for(i=addr; i<sizeof(settings) && i<length; i++)
-	EEPROM.write( i, ((byte *)&sets)[i] ); // .write(EEPROM_offs(sets) + i,...
+
+//    noInterrupts();
+    for(i=0; (addr+i)<sizeof(settings) && i<length; i++) {
+	EEPROM.write( addr+i, ((byte *)&sets)[addr+i] ); // .write(EEPROM_offs(sets) + i,...
+#if 0 && DEBUG
+        Serial.print( addr+i);
+        Serial.write(' ');
+        Serial.println(((byte *)&sets)[addr+i]); 
+#endif
+    }
+//    interrupts();
+    ht_paused=0;
 }

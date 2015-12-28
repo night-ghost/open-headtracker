@@ -31,7 +31,6 @@ int gyro_raw[3];
 int mag_raw[3];
 
 // список коммутации каналов
-//unsigned char PpmIn_PpmOut[13] = {0,1,2,3,4,5,6,7,8,9,10,11,12};
 
 long channel_value[13] = {1500,1500,1500,1500,1500,1500,1500,1500,1500,1500,1500,1500,1500};
 
@@ -42,6 +41,8 @@ int channelValues[20];  // for input PPM
 unsigned char channel_number = 1;
 char shift = 0;
 char time_out = 0;
+
+extern byte ht_paused;
 
 //--------------------------------------------------------------------------------------
 // Func: PrintPPM
@@ -88,8 +89,8 @@ void InitPWMInterrupt(){
     
     TIMSK1 = 
         (PPM_IN << ICIE1) | // Enable input capture interrupt    
-        (1 << OCIE1A) | // Interrupt on compare A
-        (0 << OCIE1B) | // Disable interrupt on compare B    
+        (1 << OCIE1A) |     // Interrupt on compare A
+        (0 << OCIE1B) |     // Disable interrupt on compare B    
         (0 << TOIE1);          
 
     // OCR1A is used to generate PPM signal and later reset counter (to control frame-length)
@@ -192,7 +193,8 @@ ISR(TIMER0_COMPA_vect){
     // Reset counter - should be changed to CTC timer mode. 
     TCNT0 = 0;
 
-    if (read_sensors == 1) {
+
+    if (!ht_paused && read_sensors == 1) {
         time_out++;
         if (time_out > 10) {
 #if DEBUG
@@ -334,14 +336,22 @@ void DetectPPM(){
         if ( (channel + 1) != sets.htChannels[0] &&
              (channel + 1) != sets.htChannels[1] &&
              (channel + 1) != sets.htChannels[2] )  {
-            channelValues[channel++] = pulseTime;
-            channel_value[sets.PpmIn_PpmOut[channel]] = pulseTime;
+            channelValues[channel++] = pulseTime; // input data
+            channel_value[sets.PpmIn_PpmOut[channel]] = pulseTime; // for output
         }
     } else if (pulseTime > PPM_IN_MIN) {
         channel++;
     }
 }  
 
+void testPPM_in(){
+    Serial.printf_P(PSTR("Ch: "));
+    for(byte i=0; i<channelsDetected;i++){
+	Serial.printf_P(PSTR("%d "),channelValues[i]);
+    }
+    Serial.write(10);
+
+}
 
 //--------------------------------------------------------------------------------------
 // Func: TIMER1_CAPT_vect

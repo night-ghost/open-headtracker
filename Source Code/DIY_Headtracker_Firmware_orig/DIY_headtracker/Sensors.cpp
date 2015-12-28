@@ -461,9 +461,9 @@ void FilterSensorData()
     }
 
     // Simple FilterSensorData, uses mainly gyro-data, but uses accelerometer to compensate for drift
-    rollAngle = (rollAngle + ((gyroRaw[0] - gyroOff[0]) * cos((tiltAngle - 90) / 57.3) + (gyroRaw[2] - gyroOff[2]) * sin((tiltAngle - 90) / 57.3)) / (SAMPLERATE * SCALING_FACTOR)) * gyroWeightTiltRoll + accAngle[1] * (1 - gyroWeightTiltRoll);
-    tiltAngle = (tiltAngle + ((gyroRaw[1] - gyroOff[1]) * cos((rollAngle - 90) / 57.3) + (gyroRaw[2] - gyroOff[2]) * sin((rollAngle - 90) / 57.3) * -1) / (SAMPLERATE * SCALING_FACTOR)) * gyroWeightTiltRoll + accAngle[0] * (1 - gyroWeightTiltRoll);
-    panAngle  = (panAngle + ((gyroRaw[2] - gyroOff[2]) * cos((tiltAngle - 90) / 57.3) + (((gyroRaw[0] - gyroOff[0]) * -1) * (sin((tiltAngle - 90) / 57.3)) ) + ( ((gyroRaw[1] - gyroOff[1]) * 1) * (sin((rollAngle - 90) / 57.3)))) / (SAMPLERATE * SCALING_FACTOR)) * GyroWeightPan + magAngle[2] * (1 - GyroWeightPan);
+    rollAngle = (rollAngle + ((gyroRaw[0] - gyroOff[0]) * cos((tiltAngle - 90) / 57.3) +  (gyroRaw[2] - gyroOff[2]) *  sin((tiltAngle - 90) / 57.3)) / (SAMPLERATE * SCALING_FACTOR)) * gyroWeightTiltRoll + accAngle[1] * (1 - gyroWeightTiltRoll);
+    tiltAngle = (tiltAngle + ((gyroRaw[1] - gyroOff[1]) * cos((rollAngle - 90) / 57.3) +  (gyroRaw[2] - gyroOff[2]) * -sin((rollAngle - 90) / 57.3)) / (SAMPLERATE * SCALING_FACTOR)) * gyroWeightTiltRoll + accAngle[0] * (1 - gyroWeightTiltRoll);
+    panAngle  = (panAngle  + ((gyroRaw[2] - gyroOff[2]) * cos((tiltAngle - 90) / 57.3) + ((gyroRaw[0] - gyroOff[0]) * -sin((tiltAngle - 90) / 57.3) ) + ( ((gyroRaw[1] - gyroOff[1]) * 1) * (sin((rollAngle - 90) / 57.3)))) / (SAMPLERATE * SCALING_FACTOR)) * GyroWeightPan + magAngle[2] * (1 - GyroWeightPan);
 
     if (TrackerStarted)
     {

@@ -10,5 +10,7 @@ void InitPWMInterrupt();
 void DetectPPM();
 void PrintPPM();
 void DetectPPM();
+void testPPM_in();
 
+extern int channelsDetected;
 #endif
