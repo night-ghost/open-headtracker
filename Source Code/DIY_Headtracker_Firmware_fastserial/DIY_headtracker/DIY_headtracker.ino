@@ -12,7 +12,8 @@
 //      Minor optimizations.
 //-----------------------------------------------------------------------------
 
-#include <FastSerial.h>
+//#include <FastSerial.h>
+#include <SingleSerial.h>
 
 #include <Wire.h>
 #include "config.h"
@@ -40,7 +41,13 @@ Mapping example:
 $123456789111CH
 */
 
-FastSerialPort0(Serial);
+#define RX_SIZE 128
+#define TX_SIZE 16
+uint8_t rxBuf[RX_SIZE], txBuf[TX_SIZE];
+
+//FastSerialPort0(Serial);
+SingleSerialPort_x(Serial);
+SingleSerial Serial;
 
 // Local file variables
 //
@@ -84,7 +91,7 @@ float dynFactor=1;
 //--------------------------------------------------------------------------------------
 void setup()
 {
-    Serial.begin(SERIAL_BAUD);
+    Serial.begin(SERIAL_BAUD, rxBuf, RX_SIZE, txBuf, TX_SIZE);
 
     pinMode(PPM_OUT_PIN,OUTPUT); 
     
@@ -147,7 +154,7 @@ void setup()
 //    DebugOutput(); - not works
 #endif
 
-    Serial.printf_P(PSTR("$OK!$\n"));
+    Serial.print_P(PSTR("$OK!$\n"));
 
 }
 
@@ -262,7 +269,7 @@ void loop()
                     }
                 }
                
-                Serial.printf_P(PSTR("Channel mapping received\n"));
+                Serial.print_P(PSTR("Channel mapping received\n"));
 
                // Reset serial_index and serial_started
                serial_index = 0;
@@ -297,7 +304,7 @@ void loop()
                 // Parameters from the PC client need to be scaled to match our local
                 // expectations
 
-                Serial.printf_P(PSTR("HT config received: "));
+                Serial.print_P(PSTR("HT config received: "));
            
                 int valuesReceived[20] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 
@@ -411,7 +418,7 @@ void loop()
                 resetValues=1;
                 serial_index = 0;
                 string_started = 0; 
-                Serial.printf_P(PSTR("Center set!"));
+                Serial.print_P(PSTR("Center set!"));
             }          
 
             // Save RAM settings to EEPROM
@@ -567,7 +574,7 @@ void loop()
                 // Get Settings. Scale our local values to
                 // real-world values usable on the PC side.
                 //
-                Serial.printf_P(PSTR("$SET$")); // something recognizable in the stream
+                Serial.print_P(PSTR("$SET$")); // something recognizable in the stream
 
 		char c=',';
                 Serial.print(sets.tiltRollBeta * 100);
@@ -677,7 +684,7 @@ void loop()
 inline void SaveSettings()
 {  
     WriteSets();
-    Serial.printf_P(PSTR("Settings saved!\n"));
+    Serial.print_P(PSTR("Settings saved!\n"));
 }
 
 
@@ -699,7 +706,7 @@ inline void GetSettings()
 //--------------------------------------------------------------------------------------
 void DebugOutput()
 {
-    Serial.printf_P(PSTR("\n\n\n------ Debug info------\n"));
+    Serial.print_P(PSTR("\n\n\n------ Debug info------\n"));
 
 
     Serial.printf_P(PSTR("FW Version: %S"),FIRMWARE_VERSION_FLOAT);

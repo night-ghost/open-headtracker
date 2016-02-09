@@ -3,7 +3,8 @@
 // Desc: Implementations of PPM-related functions for the project.
 //-----------------------------------------------------------------------------
 
-#include <FastSerial.h>
+//#include <FastSerial.h>
+#include <SingleSerial.h>
 
 #include "config.h"
 #include "Arduino.h"
@@ -98,7 +99,7 @@ void InitPWMInterrupt(){
 
 
 #if (DEBUG)    
-    Serial.printf_P(PSTR("PWM interrupt initialized\n"));
+    Serial.print_P(PSTR("PWM interrupt initialized\n"));
 #endif
 }
 
@@ -216,7 +217,7 @@ ISR(TIMER0_COMPA_vect){
 //--------------------------------------------------------------------------------------
 ISR(TIMER1_OVF_vect)
 {
-    Serial.printf_P(PSTR("Timer 1 OVF\n"));
+    Serial.print_P(PSTR("Timer 1 OVF\n"));
 }
 
 #endif
@@ -345,7 +346,7 @@ void DetectPPM(){
 }  
 
 void testPPM_in(){
-    Serial.printf_P(PSTR("Ch: "));
+    Serial.print_P(PSTR("Ch: "));
     for(byte i=0; i<channelsDetected;i++){
 	Serial.printf_P(PSTR("%d "),channelValues[i]);
     }

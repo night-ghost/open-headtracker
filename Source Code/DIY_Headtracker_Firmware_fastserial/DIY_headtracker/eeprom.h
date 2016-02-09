@@ -1,13 +1,12 @@
-#include <FastSerial.h>
+//#include <FastSerial.h>
 
-#include <Arduino.h>
+//#include <Arduino.h>
 
 #define EEPROM_VERSION 11
 
-#include <EEPROM.h>
+//#include <EEPROM.h>
 
 #pragma pack(push,1)
-
 struct Settings {
 //0
     byte vers; 

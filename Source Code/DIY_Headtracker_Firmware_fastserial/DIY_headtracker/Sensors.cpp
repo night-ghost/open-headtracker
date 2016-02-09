@@ -1,7 +1,8 @@
 // File: Sensors.cpp
 // Desc: Implementations sensor board functionality.
 //-----------------------------------------------------------------------------
-#include <FastSerial.h>
+//#include <FastSerial.h>
+#include <SingleSerial.h>
 
 #include "config.h"
 #include "Arduino.h"
@@ -770,7 +771,7 @@ void InitSensors()
     if(d == compass_mode) {        // a 5883L supports the sample averaging config
 
 #if DEBUG
-//    Serial.printf_P(PSTR("compass type HMC5883L\n")); 
+//    Serial.print_P(PSTR("compass type HMC5883L\n")); 
 #endif  
 
         compass = AP_COMPASS_TYPE_HMC5883L;
@@ -788,7 +789,7 @@ void InitSensors()
         
     } else if ( d == (NormalOperation | DataOutputRate_75HZ<<2)) {
 #if DEBUG
-//    Serial.printf_P(PSTR("compass type HMC5883\n")); 
+//    Serial.print_P(PSTR("compass type HMC5883\n")); 
 #endif  
 	compass = AP_COMPASS_TYPE_HMC5843;
     } else {
