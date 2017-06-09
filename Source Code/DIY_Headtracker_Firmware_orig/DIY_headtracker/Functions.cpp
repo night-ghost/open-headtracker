@@ -2,6 +2,8 @@
 // File: Functions.cpp
 // Desc: Implementations of PPM-related functions for the project.
 //-----------------------------------------------------------------------------
+#include <SingleSerial.h>
+
 #include "config.h"
 #include "Arduino.h"
 #include "functions.h"
@@ -42,7 +44,7 @@ char time_out = 0;
 //--------------------------------------------------------------------------------------
 void PrintPPM()
 {
-  for (char j = 1; j < 13; j++)
+  for (byte j = 1; j < 13; j++)
   {
       Serial.print(channel_value[j]);
       Serial.print(",");

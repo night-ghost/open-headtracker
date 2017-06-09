@@ -18,6 +18,8 @@
 #include "sensors.h"
 #include <EEPROM.h>
 
+#include <SingleSerial.h>
+SingleSerialPort(Serial);
 /*
 Channel mapping/config for PPM out:
 
@@ -44,9 +46,9 @@ $123456789111CH
 int frameNumber = 0;		    // Frame count since last debug serial output
 
 char serial_data[101];          // Array for serial-data 
-unsigned char serial_index = 0; // How many bytes have been received?
+byte serial_index = 0; // How many bytes have been received?
 char string_started = 0;        // Only saves data if string starts with right byte
-unsigned char channel_mapping[13];
+byte channel_mapping[14];
 
 char outputMag = 0;             // Stream magnetometer data to host
 char outputAcc = 0;             // Stream accelerometer data to host
@@ -219,13 +221,11 @@ void loop()
             {
                 // To keep it simple, we will not let the channels be 0-initialized, but
                 // start from 1 to match actual channels. 
-                for (unsigned char i = 0; i < 13; i++)
-                {
+                for (unsigned char i = 0; i < 13; i++)  {
                     channel_mapping[i + 1] = serial_data[i] - 48;
                   
                     // Update the dedicated PPM-in -> PPM-out array for faster performance.
-                    if ((serial_data[i] - 48) < 14)
-                    {
+                    if ((serial_data[i] - 48) < 14) {
                         PpmIn_PpmOut[serial_data[i]-48] = i + 1;
                     }
                 }

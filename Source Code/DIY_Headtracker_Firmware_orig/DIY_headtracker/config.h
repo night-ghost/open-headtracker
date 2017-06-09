@@ -23,7 +23,7 @@
 
 // Fatshark headset headtracker module support. Set to 1 to enable.
 // See: http://www.rcgroups.com/forums/showpost.php?p=23051198&postcount=573
-#define FATSHARK_HT_MODULE 0
+#define FATSHARK_HT_MODULE 1
 
 //
 // -- End of user-configurable parameters.
@@ -57,10 +57,10 @@
 #define DEAD_TIME 800
 
 // Sets the frame-length .
-#define FRAME_LENGTH (5003 + NUMBER_OF_CHANNELS * 5000)
+#define FRAME_LENGTH (5003u + NUMBER_OF_CHANNELS * 5000u)
 
 // TOP (timer rollover) used for PPM pulse time measurement
-#define TOP (5003 + NUMBER_OF_CHANNELS * 5000)
+#define TOP (5003u + NUMBER_OF_CHANNELS * 5000u)
 
 // Set to 0, stored gyro calibration is used. If 1, gyro is calibrated at powerup  
 #define ALWAYS_CAL_GYRO 0

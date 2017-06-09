@@ -13,25 +13,24 @@
 
 // Define for extra debug serial info
 #define DEBUG 1
-//#define ECHO
 
 #define SAMPLERATE 100       // Samplerate of sensors (in hz, samples per second)
 
 #define PPM_OUT_PIN 9// PPM out on ICP1 - pin9
 
 
-#define PPM_IN  1    // Set to 1 to enable PPM input, 0 to disable. 
+#define PPM_IN  0    // Set to 1 to enable PPM input, 0 to disable. 
 #define PPM_IN_PIN 2 // PPM in on ICP0 - pin2
 
 //Connect A0 (analog_0) to pin2 (middle) of a 2K potentiometer, pin1 to +VCC, pin3 to GND.
-#define ADC_PIN A0
+// #define ADC_PIN A0
 
 
-#define BUTTON_INPUT 11// Center/pause input button pin number
-#define ARDUINO_LED  13// Arduino LED
-#define BUZZER       4 // Pin definition for LED and buzzer (Fatshark goggles)
+#define BUTTON_INPUT 11// PB4 (16) Center/pause input button pin number
+#define ARDUINO_LED  13// LED pin
+#define BUZZER       4 // PD4 (2) Pin definition for LED and buzzer (Fatshark goggles)
 
-
+#define HEARTBEAT_LED 5 // PD5 (9)
 
 // Button hold time for pause/unpause
 #define BUTTON_HOLD_PAUSE_THRESH    1500    // 1.5 second button hold required to pause/unpause tracking.
@@ -41,7 +40,7 @@
 
 // Fatshark headset headtracker module support. Set to 1 to enable.
 // See: http://www.rcgroups.com/forums/showpost.php?p=23051198&postcount=573
-#define FATSHARK_HT_MODULE 0
+#define FATSHARK_HT_MODULE 1
 
 //
 // -- End of user-configurable parameters.
@@ -54,18 +53,21 @@
 //
 
 // Firmware Version, e.g. X.YY
-#define FIRMWARE_VERSION_FLOAT  PSTR("1.04")    // 2 decimal places
+#define FIRMWARE_VERSION  PSTR("1.05")
 
 // Number of PPM channels out. 1 - 12 channels supported. 
-#define NUMBER_OF_CHANNELS 10
+#define NUMBER_OF_CHANNELS (10u)
 
 
 // Output serial data to host evern X frames
 #define SERIAL_OUTPUT_FRAME_INTERVAL    20
+#define SERIAL_DEBUG_FRAME_INTERVAL    50
+
+
 
 // Serial communication speed. 
-#define SERIAL_BAUD 57600
-//#define SERIAL_BAUD 115200
+//#define SERIAL_BAUD 57600
+#define SERIAL_BAUD 115200
 
 // Sensor board update-rate. Not done yet. 
 #define UPDATE_RATE 50
@@ -74,10 +76,10 @@
 #define DEAD_TIME 800
 
 // Sets the frame-length 
-#define FRAME_LENGTH (5003 + NUMBER_OF_CHANNELS * 5000)
+#define FRAME_LENGTH (5003u + NUMBER_OF_CHANNELS * 5000u)
 
 // TOP (timer rollover) used for PPM pulse time measurement
-#define TOP (5003 + NUMBER_OF_CHANNELS * 5000)
+#define TOP (5003u + NUMBER_OF_CHANNELS * 5000u)
 
 // Set to 0, stored gyro calibration is used. If 1, gyro is calibrated at powerup  
 #define ALWAYS_CAL_GYRO 0

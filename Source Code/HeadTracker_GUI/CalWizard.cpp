@@ -21,9 +21,16 @@
 #include "StdAfx.h"
 #include "CalWizard.h"
 #include "HeadTrackerHardware.h"
+#include <math.h>
+
+
 
 using namespace HeadTrackerGUI;
 using namespace System::Resources;
+using namespace System::Drawing;
+
+CompassCalibrator	mag_calibrator;
+CompassCalibrator	acc_calibrator;
 
 //--------------------------------------------------------------------------------------
 // Func: CalWizard_Load
@@ -33,6 +40,8 @@ System::Void CalWizard::CalWizard_Load(System::Object^ sender, System::EventArgs
 {
     mainUpdateTimer->Enabled = false;
     Begin(CalMode);
+	
+	pictureBox1->Refresh();
 }
 
 System::Void CalWizard::CalWizard_OnClose(System::Object^  sender, System::Windows::Forms::FormClosedEventArgs^  e)
@@ -46,69 +55,78 @@ System::Void CalWizard::Begin(CALMODE mode)
     SetupUIForStep(0);
 }
 
+extern System::Double myConvert(System::String^ s);
+
 //--------------------------------------------------------------------------------------
 // Func: MainUpdateTimer_Tick
 // Desc: Handler for the serial update timer. This handler reads any new data from the
 //       serial driver's FIFO buffer, converts, and stores the results.
 //--------------------------------------------------------------------------------------
-System::Void CalWizard::MainUpdateTimer_Tick(System::Object^  sender, System::EventArgs^  e)
-{
-    if (TrackerWrap::Tracker->Port->IsOpen)
-    {
-        while (TrackerWrap::Tracker->Port->BytesToRead > 0)
-        {
+System::Void CalWizard::MainUpdateTimer_Tick(System::Object^  sender, System::EventArgs^  e){
+	byte lastByte;
+    if (TrackerWrap::Tracker->Port->IsOpen)  {
+
+		SerialLine="";
+		DigitLine="";
+
+		while (TrackerWrap::Tracker->Port->BytesToRead > 0)  {
+			lastByte=serialbyte;
+
             serialbyte = TrackerWrap::Tracker->Port->ReadChar();
 
-            if (TrackerWrap::Tracker->MagAccelStreaming)
-            {
-                if (serialbyte == 13) {
-					
-                    if(SerialData[0]>1600) SerialData[0] -= 3000;
-                    if(SerialData[1]>1600) SerialData[1] -= 3000;
-                    if(SerialData[2]>1600) SerialData[2] -= 3000;
-                    if(SerialData[3]>1600) SerialData[3] -= 3000;
-                    if(SerialData[4]>1600) SerialData[4] -= 3000;
-                    if(SerialData[5]>1600) SerialData[5] -= 3000;
-                   
-                    if ( Serialindex == 5 )
-                    {
-                        // Mag Y and Z swapped on purpose
-                        MagXReading = (int)SerialData[0];
-                        MagYReading = (int)SerialData[2];
-                        MagZReading = (int)SerialData[1];
-                        AccXReading = (int)SerialData[3];
-                        AccYReading = (int)SerialData[4];
-                        AccZReading = (int)SerialData[5];
+			if (serialbyte == 10) serialbyte = 13;
+            if (serialbyte == 13) { // EOL
+				if (lastByte == 13) {
+					continue;			
+				}
 
-                        MagCurXLbl->Text = Convert::ToString(MagXReading);
-                        MagCurYLbl->Text = Convert::ToString(MagYReading);
-                        MagCurZLbl->Text = Convert::ToString(MagZReading);
-                        AccCurXLbl->Text = Convert::ToString(AccXReading);
-                        AccCurYLbl->Text = Convert::ToString(AccYReading);
-                        AccCurZLbl->Text = Convert::ToString(AccZReading);
+				Debug::WriteLine(SerialLine);
+				if(SerialLine=="" || SerialLine[0]=='#') {
+					SerialLine="";
+					DigitLine="";
+					Serialindex = 0;
+					continue;
+				}
+
+	            if (TrackerWrap::Tracker->MagAccelStreaming) {
+					array<String^>^ line = DigitLine->Split(',');
+
+                    if ( line->Length >= 6 )  {
                         
-                        if ( CalMode == MINMAXTRACKING && TrackMinMax )
-                            UpdateCalc();
+
+						try {
+							MagXReading = myConvert(line[0]); MagYReading = myConvert(line[1]);	MagZReading = myConvert(line[2]);
+							AccXReading = myConvert(line[3]); AccYReading = myConvert(line[4]);	AccZReading = myConvert(line[5]);
+
+							MagCurXLbl->Text = Convert::ToString(MagXReading);
+							MagCurYLbl->Text = Convert::ToString(MagYReading);
+							MagCurZLbl->Text = Convert::ToString(MagZReading);
+							AccCurXLbl->Text = Convert::ToString(AccXReading);
+							AccCurYLbl->Text = Convert::ToString(AccYReading);
+							AccCurZLbl->Text = Convert::ToString(AccZReading);
+
+							NewPoint(MagXReading,MagYReading,MagZReading, AccXReading,AccYReading,AccZReading);
+
+							if ( CalMode == MINMAXTRACKING && TrackMinMax )
+		                        UpdateCalc();
+
+						} catch(System::Exception^ e){
+							Debug::WriteLine("conversion error! "+e->Message);
+						
+						}
+
                     }
-                    SerialData[0] = 0;
-                    SerialData[1] = 0;
-                    SerialData[2] = 0;
-                    SerialData[3] = 0;
-                    SerialData[4] = 0;
-                    SerialData[5] = 0;
+				}
+				SerialLine="";
+				DigitLine="";
 
-                    Serialindex = 0;
-                }
-                else if (serialbyte == 44)
-                {
-                    Serialindex++;
-
-                }
-                else if (serialbyte > 47 && serialbyte < 58)
-                {
-                    SerialData[Serialindex] = SerialData[Serialindex] * 10 + (serialbyte - 48);
-                }
+                Serialindex = 0;
+            } else{
+				SerialLine += Convert::ToChar((serialbyte));
+				if(serialbyte <='9')
+					DigitLine += Convert::ToChar((serialbyte));
             }
+            
         } // while serial data is pulled in
     } // if port is open
 }
@@ -157,20 +175,20 @@ System::Void CalWizard::UpdateCalc()
         break;
 
     case MINMAXTRACKING:
-        if ( MagXReading > MagX1 )
-            MagX1 = MagXReading;
-        if ( MagXReading < MagX2 )
-            MagX2 = MagXReading;
+        if ( MagXReading > MagXmax )
+            MagXmax = MagXReading;
+        if ( MagXReading < MagXmin )
+            MagXmin = MagXReading;
 
-        if ( MagYReading > MagY1 )
-            MagY1 = MagYReading;
-        if ( MagYReading < MagY2 )
-            MagY2 = MagYReading;
+        if ( MagYReading > MagYmax )
+            MagYmax = MagYReading;
+        if ( MagYReading < MagYmin )
+            MagYmin = MagYReading;
 
-        if ( MagZReading > MagZ1 )
-            MagZ1 = MagZReading;
-        if ( MagZReading < MagZ2 )
-            MagZ2 = MagZReading;
+        if ( MagZReading > MagZmax )
+            MagZmax = MagZReading;
+        if ( MagZReading < MagZmin )
+            MagZmin = MagZReading;
 
         if ( AccXReading > AccXMax )
             AccXMax = AccXReading;
@@ -186,16 +204,47 @@ System::Void CalWizard::UpdateCalc()
             AccZMax = AccZReading;
         if ( AccZReading < AccZMin )
             AccZMin = AccZReading;
+
+		MagMaxX->Text = Convert::ToString(MagXmax);
+		MagMaxY->Text = Convert::ToString(MagYmax);
+		MagMaxZ->Text = Convert::ToString(MagZmax);
+		MagMinX->Text = Convert::ToString(MagXmin);
+		MagMinY->Text = Convert::ToString(MagYmin);
+		MagMinZ->Text = Convert::ToString(MagZmin);
+
+		AccMaxX->Text = Convert::ToString(AccXMax);
+		AccMaxY->Text = Convert::ToString(AccYMax);
+		AccMaxZ->Text = Convert::ToString(AccZMax);
+		AccMinX->Text = Convert::ToString(AccXMin);
+		AccMinY->Text = Convert::ToString(AccYMin);
+		AccMinZ->Text = Convert::ToString(AccZMin);
+
+
         break;
     }
 
-    MagXOffset = (int)((MagX1 + MagX2) * 0.5); 
-    MagYOffset = (int)((MagY1 + MagY2) * 0.5);
-    MagZOffset = (int)((MagZ1 + MagZ2) * 0.5);
+    MagXOffset = (MagXmax + MagXmin) * 0.5; 
+    MagYOffset = (MagYmax + MagYmin) * 0.5;
+    MagZOffset = (MagZmax + MagZmin) * 0.5;
 
-    AccXOffset = (AccXMax + AccXMin) / -2;
-    AccYOffset = (AccYMax + AccYMin) / -2;
-    AccZOffset = (AccZMax + AccZMin) / -2;
+    AccXOffset = (AccXMax + AccXMin) * -0.5;
+    AccYOffset = (AccYMax + AccYMin) * -0.5;
+    AccZOffset = (AccZMax + AccZMin) * -0.5;
+
+	// диапазон изменения
+	MagXgain = (MagXmax - MagXmin)/2; 
+    MagYgain = (MagYmax - MagYmin)/2;
+    MagZgain = (MagZmax - MagZmin)/2;
+	MagXgain /= MagZgain; // normalize to Z
+	MagYgain /= MagZgain;
+	MagZgain  = 1;
+
+    AccXgain = (AccXMax - AccXMin)/2;
+    AccYgain = (AccYMax - AccYMin)/2;
+    AccZgain = (AccZMax - AccZMin)/2;
+	AccXgain /= AccZgain; // normalize to z
+	AccYgain /= AccZgain;
+	AccZgain  = 1;
 
     MagXOffsetLbl->Text = Convert::ToString(MagXOffset);
     MagYOffsetLbl->Text = Convert::ToString(MagYOffset);
@@ -204,6 +253,15 @@ System::Void CalWizard::UpdateCalc()
     AccXOffsetLbl->Text = Convert::ToString(AccXOffset);
     AccYOffsetLbl->Text = Convert::ToString(AccYOffset);
     AccZOffsetLbl->Text = Convert::ToString(AccZOffset);
+
+    lMagXGain->Text = Convert::ToString(MagXgain);
+    lMagYGain->Text = Convert::ToString(MagYgain);
+    lMagZGain->Text = Convert::ToString(MagZgain);
+
+    lAccXGain->Text = Convert::ToString(AccXgain);
+    lAccYGain->Text = Convert::ToString(AccYgain);
+    lAccZGain->Text = Convert::ToString(AccZgain);
+
 }
 
 //--------------------------------------------------------------------------------------
@@ -212,16 +270,22 @@ System::Void CalWizard::UpdateCalc()
 //--------------------------------------------------------------------------------------
 System::Void CalWizard::ZeroMinMaxTracking()
 {
-    MagX1 = 0;
-    MagX2 = 0;
-    MagY1 = 0;
-    MagY2 = 0;
-    MagZ1 = 0;
-    MagZ2 = 0;
+    MagXmax = 0;
+    MagXmin = 0;
+    MagYmax = 0;
+    MagYmin = 0;
+    MagZmax = 0;
+    MagZmin = 0;
 
     MagXOffset = 0;
     MagYOffset = 0;
     MagZOffset = 0;
+
+	MagXgain = 1;
+    MagYgain = 1;
+    MagZgain = 1;
+
+
 
     AccXMin = 0;
     AccXMax = 0;
@@ -233,6 +297,11 @@ System::Void CalWizard::ZeroMinMaxTracking()
     AccXOffset = 0;
     AccYOffset = 0;
     AccZOffset = 0;
+
+	AccXgain = 1;
+    AccYgain = 1;
+    AccZgain = 1;
+
 }
 
 //--------------------------------------------------------------------------------------
@@ -443,8 +512,9 @@ System::Void CalWizard::CompleteAxisCalStep(int Step)
         mainUpdateTimer->Enabled = true;
         
         // Zero the existing cal
-        TrackerWrap::Tracker->StoreAccelCal(0, 0, 0);
-        TrackerWrap::Tracker->StoreMagCal(0, 0, 0);
+//        TrackerWrap::Tracker->StoreAccelCal(0, 0, 0);
+//        TrackerWrap::Tracker->StoreMagCal(0, 0, 0);
+        TrackerWrap::Tracker->CalibrateGyro();
 
         // Start mag and accel output from device for calibration. This call will
         // also stop any other stream data.
@@ -452,18 +522,17 @@ System::Void CalWizard::CompleteAxisCalStep(int Step)
         break;
     case 1:
         {
-            TrackerWrap::Tracker->CalibrateGyro();
-            MagX1 = MagXReading;
-            MagY1 = MagYReading;
+            MagXmax = MagXReading;
+            MagYmax = MagYReading;
             AccZMax = AccZReading;
             UpdateCalc();
         }
         break;
     case 2:
         {
-            MagX2 = MagXReading;
-            MagY2 = MagYReading;
-            MagZ1 = MagZReading;
+            MagXmin = MagXReading;
+            MagYmin = MagYReading;
+            MagZmax = MagZReading;
             UpdateCalc();
         }
         break;
@@ -493,7 +562,7 @@ System::Void CalWizard::CompleteAxisCalStep(int Step)
         break;
     case 7:
         {
-            MagZ2 = MagZReading;
+            MagZmin = MagZReading;
             AccZMin = AccZReading;
             UpdateCalc();
         }
@@ -518,6 +587,11 @@ System::Void CalWizard::CompleteAxisCalStep(int Step)
 //--------------------------------------------------------------------------------------
 System::Void CalWizard::CompleteTrackingCalStep(int Step)
 {
+	double delay=1;
+		bool retry=false;
+		const int AP_COMPASS_OFFSETS_MAX_DEFAULT = 600;
+		const float calibration_threshold=16;
+
     switch ( Step )
     {
     case 0:
@@ -525,46 +599,257 @@ System::Void CalWizard::CompleteTrackingCalStep(int Step)
         mainUpdateTimer->Enabled = true;
         
         // Zero the existing cal
-        TrackerWrap::Tracker->StoreAccelCal(0, 0, 0);
-        TrackerWrap::Tracker->StoreMagCal(0, 0, 0);
+//        TrackerWrap::Tracker->StoreAccelCal(0, 0, 0);
+//        TrackerWrap::Tracker->StoreMagCal(0, 0, 0);
+        TrackerWrap::Tracker->CalibrateGyro();
+        ZeroMinMaxTracking();
         
         // Start mag and accel output from device for calibration. This call will
         // also stop any other stream data.
-        TrackerWrap::Tracker->StreamMagAccelData(true);
-        break;
+		TrackMinMax = true;
+        
+
+		mag_calibrator.set_tolerance(calibration_threshold);
+		acc_calibrator.set_tolerance(calibration_threshold);
+		mag_calibrator.start(retry, delay, AP_COMPASS_OFFSETS_MAX_DEFAULT);
+		acc_calibrator.start(retry, delay, AP_COMPASS_OFFSETS_MAX_DEFAULT);
+
+		txtMag->Text = "";
+		txtAcc->Text = "";
+
+		// start!
+		TrackerWrap::Tracker->StreamMagAccelData(true);
+		break;
     case 1:
-        {
-            TrackerWrap::Tracker->CalibrateGyro();
-            ZeroMinMaxTracking();
-            TrackMinMax = true;
-        }
         break;
     case 2:
-        {
-            // nothing to do. Just user instruction.
-        }
+        // nothing to do. Just user instruction.
         break;
     case 3:
-        {
-            // nothing to do. Just user instruction.
-        }
+        // nothing to do. Just user instruction.
         break;
     case 4:
-        {
-            // nothing to do. Just user instruction.
-        }
+        // nothing to do. Just user instruction.
         break;
     case 5:
-        {
-            // Store values
-            TrackerWrap::Tracker->StoreAccelCal(AccXOffset, AccYOffset, AccZOffset);
-            TrackerWrap::Tracker->StoreMagCal(MagXOffset, MagYOffset, MagZOffset);
-        }
-        break;
-    case 6:
         TrackerWrap::Tracker->StreamMagAccelData(false);
+
+		// calculate
+
+		if( mag_calibrator.get_status()== COMPASS_CAL_SUCCESS && 
+			acc_calibrator.get_status()== COMPASS_CAL_SUCCESS ){
+
+			Vector3f ofs, diag, offdiag;
+			mag_calibrator.get_calibration(ofs, diag, offdiag);
+
+			// Store values
+			TrackerWrap::Tracker->StoreMagCal(ofs.x, ofs.y, ofs.z);
+			Sleep(100);
+			TrackerWrap::Tracker->StoreMagGain(diag.x, diag.y, diag.z);
+			Sleep(100);
+			TrackerWrap::Tracker->StoreMagDiagOff(offdiag.x, offdiag.y, offdiag.z);
+
+			acc_calibrator.get_calibration(ofs, diag, offdiag);
+
+			TrackerWrap::Tracker->StoreAccelCal(ofs.x, ofs.y, ofs.z);
+			Sleep(100);
+			TrackerWrap::Tracker->StoreAccelGain(diag.x, diag.y, diag.z);
+			Sleep(100);
+			TrackerWrap::Tracker->StoreAccelDiagOff(offdiag.x, offdiag.y, offdiag.z);
+			Sleep(100);
+
+		}
+		Sleep(100);
+        break;
+
+    case 6:
         mainUpdateTimer->Enabled = false;
         Close();
         break;
     }
 }
+
+#define SIZE_X 360
+#define SIZE_Y 360
+
+#define sqrt_2 1.41421356237
+#define sqrt_3 1.73205080757
+
+System::Void CalWizard::updateStatus(System::Windows::Forms::ProgressBar^  progress, CompassCalibrator &calibrator, System::Windows::Forms::TextBox^ txt) {
+
+		
+        uint8_t cal_status = calibrator.get_status();
+ 
+        if (cal_status == COMPASS_CAL_WAITING_TO_START  ||
+            cal_status == COMPASS_CAL_RUNNING_STEP_ONE ||
+            cal_status == COMPASS_CAL_RUNNING_STEP_TWO) {
+            double completion_pct = calibrator.get_completion_percent();
+            auto& completion_mask = calibrator.get_completion_mask();
+            Vector3f direction(0.0f,0.0f,0.0f);
+            uint8_t attempt = calibrator.get_attempt();
+			progress->Value = (int)completion_pct;
+			//progress->ForeColor = cal_status == COMPASS_CAL_RUNNING_STEP_TWO? RGB(0,255,0):RGB(0,0, 255);
+			//System::Drawing::Color
+
+			txt->Text = cal_status == COMPASS_CAL_RUNNING_STEP_TWO? "Step two": "Step one";
+        }
+
+		
+        else if ((cal_status == COMPASS_CAL_SUCCESS ||
+            cal_status == COMPASS_CAL_FAILED)) {
+            double fitness = calibrator.get_fitness();
+            Vector3f ofs, diag, offdiag;
+            calibrator.get_calibration(ofs, diag, offdiag);
+			txt->Text = (cal_status == COMPASS_CAL_SUCCESS ? "Succes" : "Failed") + " " + Convert::ToString(fitness);
+		}
+}
+
+System::Void CalWizard::NewPoint(double ax,double ay,double az,double mx,double my,double mz){
+	
+	Vector3d tm,ta;
+
+	const Vector3f vm= Vector3f(mx,my,mz);
+	const Vector3f va= Vector3f(ax,ay,az);
+
+	tm.v=new Vector3f(mx,my,mz);
+	ta.v=new Vector3f(ax,ay,az);
+
+	MagData->Add(tm);
+	AccData->Add(ta);
+
+	mag_calibrator.new_sample(vm);
+	acc_calibrator.new_sample(va);
+
+	updateStatus(prgMag,mag_calibrator, txtMag);
+	updateStatus(prgAcc,acc_calibrator, txtAcc);
+
+	//pictureBox1->Refresh();
+	Pen^ rp = gcnew Pen( Color::Red, 1.0f );
+	Pen^ bp = gcnew Pen( Color::Blue, 1.0f );
+
+	Matrix3f izo = Matrix3f(
+		sqrt_3, 0, -sqrt_3,
+		1, 2, 1,
+		sqrt_2,-sqrt_2,sqrt_2
+	);
+
+	Matrix3f &plan = Matrix3f(
+		1,0,0,
+		0,1,0,
+		0,0,0
+	);
+
+	int L=180, center_x=SIZE_X/2, center_y = SIZE_Y/2 + 20;
+	System::Drawing::Graphics ^ g;
+	g = pictureBox1->CreateGraphics();
+
+
+	Vector3f result= (izo * *tm.v);
+		result = result / sqrt(6.0);
+		result = plan*result;
+
+		int x,y;
+		x=(int)(center_x + result.x/3);
+		y=(int)(center_y - result.y/3);
+
+		g->DrawLine(bp, x,y,  x+1,y );
+
+	result= (izo * *ta.v);
+		result = result / sqrt(6.0);
+		result = plan*result;
+
+		x=(int)(center_x + result.x/3);
+		y=(int)(center_y - result.y/3);
+
+		g->DrawLine(rp, x,y,  x+1,y );
+
+
+
+		// update status
+
+
+}
+
+System::Void CalWizard::pictureBox1_Paint(System::Object^ sender, System::Windows::Forms::PaintEventArgs^ e) {
+
+/*	Graphics ^ g = pictureBox1->CreateGraphics();
+    Pen^ p = gcnew Pen( Color::Black,1.0f );
+    Point center = Point(180, 180);
+    Point up = Point(180, 360);
+    g->DrawLine(p, center, up);
+*/
+	Pen^ p = gcnew Pen( Color::Black, 1.0f );
+	Pen^ rp = gcnew Pen( Color::Red, 1.0f );
+	Pen^ bp = gcnew Pen( Color::Blue, 1.0f );
+
+	double alp=60.0 / 180 *3.14159265;
+	int L=180, center_x=SIZE_X/2, center_y = SIZE_Y/2 + 20;
+
+	e->Graphics->DrawLine(p, center_x,center_y, center_x,center_y - L); // up
+	e->Graphics->DrawLine(p, center_x,center_y, (int)(center_x - (L * sin(alp))), (int)(center_y + (L * cos(alp))) );
+	e->Graphics->DrawLine(p, center_x,center_y, (int)(center_x + (L * sin(alp))), (int)(center_y + (L * cos(alp))) );
+
+	Matrix3f izo = Matrix3f(
+		sqrt_3, 0, -sqrt_3,
+		1, 2, 1,
+		sqrt_2,-sqrt_2,sqrt_2
+	);
+
+	Matrix3f &plan = Matrix3f(
+		1,0,0,
+		0,1,0,
+		0,0,0
+	);
+
+	for(int i=0; i< MagData->Count; i++){
+		Vector3d v = MagData[i];
+		Vector3f result= (izo * *v.v);
+		result = result / sqrt(6.0);
+		result = plan*result;
+
+		int x,y;
+		x=(int)(center_x + result.x/3);
+		y=(int)(center_y - result.y/3);
+
+		e->Graphics->DrawLine(bp, x,y,  x+1,y );
+
+	}
+
+	for(int i=0; i< AccData->Count; i++){
+		Vector3d v = AccData[i];
+		Vector3f result= (izo * *v.v);
+		result = result / sqrt(6.0);
+		result = plan*result;
+
+		int x,y;
+		x=(int)(center_x + result.x/3);
+		y=(int)(center_y - result.y/3);
+
+
+		e->Graphics->DrawLine(rp, x,y,  x,y+1 );
+
+	}
+
+
+	//e->Graphics->DrawLine(p, 0,0, 180,180);
+}
+
+/*
+https://ru.wikipedia.org/wiki/%D0%98%D0%B7%D0%BE%D0%BC%D0%B5%D1%82%D1%80%D0%B8%D1%87%D0%B5%D1%81%D0%BA%D0%B0%D1%8F_%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%86%D0%B8%D1%8F
+
+
+izometr={ 
+	{sqrt_3, 0, -sqrt_3},
+	{1, 2, 1},
+	{sqrt_2,-sqrt_2,sqrt_2}
+};
+
+plan={
+	{1,0,0},
+	{0,1,0},
+	{0,0,0}
+};
+
+coords2 = plan * sqrt(6) * izometr * coords3
+
+*/

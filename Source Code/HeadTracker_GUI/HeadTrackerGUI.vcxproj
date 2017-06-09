@@ -51,7 +51,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -98,24 +98,41 @@
     <None Include="Position7.jpg" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="AP_GeodesicGrid.cpp" />
+    <ClCompile Include="AP_Math.cpp" />
     <ClCompile Include="AssemblyInfo.cpp" />
     <ClCompile Include="CalWizard.cpp" />
+    <ClCompile Include="CompassCalibrator.cpp" />
     <ClCompile Include="MainForm.cpp" />
+    <ClCompile Include="matrix3.cpp" />
+    <ClCompile Include="matrix_alg.cpp" />
+    <ClCompile Include="polygon.cpp" />
+    <ClCompile Include="quaternion.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="vector3.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="AP_GeodesicGrid.h" />
+    <ClInclude Include="AP_Math.h" />
     <ClInclude Include="CalWizard.h">
       <FileType>CppForm</FileType>
     </ClInclude>
+    <ClInclude Include="CompassCalibrator.h" />
     <ClInclude Include="HeadTrackerHardware.h" />
     <ClInclude Include="MainForm.h">
       <FileType>CppForm</FileType>
     </ClInclude>
+    <ClInclude Include="matrix3.h" />
+    <ClInclude Include="polygon.h" />
+    <ClInclude Include="quaternion.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="rotations.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="vector2.h" />
+    <ClInclude Include="vector3.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="app.rc" />
@@ -124,7 +141,9 @@
     <EmbeddedResource Include="CalWizard.resx">
       <DependentUpon>CalWizard.h</DependentUpon>
     </EmbeddedResource>
-    <EmbeddedResource Include="Resources.resx" />
+    <EmbeddedResource Include="Resources.resx">
+      <SubType>Designer</SubType>
+    </EmbeddedResource>
     <EmbeddedResource Include="MainForm.resX">
       <DependentUpon>MainForm.h</DependentUpon>
       <SubType>Designer</SubType>

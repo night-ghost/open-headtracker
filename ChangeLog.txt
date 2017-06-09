@@ -1,3 +1,20 @@
+Version 1.05 (June 2017 - NightGhost)
+* sensor timer moved from timer0 to timer2 - so we can use millis()!
+* odd slow Wire library changed to fast I2C library
+* I2C library altered to speed up and reduce size
+* added full compass calibration with hard-iron and soft-iron corrections
+* addede Four Order filter to accel data
+* all code refactored to fit all the above
+* calculations optimized so now measure & calculations uses only 4ms
+* gyro filter changed from 98Hz to 20Hz
+
+GUI:
+* initialization rewritten
+* compass calibration rewritten
+* added visualization of compass calibration
+* fixed bugs and some bad designs
+
+
 Version 1.04 (October 31st, 2013 - Mark Mansur)
 - Firmware: Added an option in config.h to enable support for kristaps_r Fatshark goggle HT module (http://www.rcgroups.com/forums/showpost.php?p=23051198&postcount=573)
 - Firmware: Fixed issue where roll settings weren't being persisted/restored

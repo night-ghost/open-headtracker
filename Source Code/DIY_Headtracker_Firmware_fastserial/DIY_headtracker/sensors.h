@@ -8,11 +8,11 @@
 #include "Arduino.h"
 #include "eeprom.h"
 
-extern byte compass;
+extern byte compass_id;
 
 void InitSensors();
-void WriteToI2C(int device, byte address, byte val);
-void ReadFromI2C(int device, byte address, char bytesToRead);
+void WriteToI2C(byte device, byte address, byte val);
+void ReadFromI2C(byte device, byte address, byte bytesToRead);
 void UpdateSensors();
 void GyroCalc();
 void AccelCalc();
@@ -41,5 +41,6 @@ void CalcMagAngle();
 void clearSettings();
 void CalibrationStart();
 
+extern uint8_t outputDbg;
 #endif // sensors_h
 

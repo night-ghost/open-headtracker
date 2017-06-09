@@ -14,12 +14,11 @@
 
 //#include <FastSerial.h>
 #include <SingleSerial.h>
+#include <Arduino.h>
 
-#include <Wire.h>
 #include "config.h"
 #include "functions.h"
 #include "sensors.h"
-#include <EEPROM.h>
 
 /*
 Channel mapping/config for PPM out:
@@ -41,20 +40,18 @@ Mapping example:
 $123456789111CH
 */
 
-#define RX_SIZE 128
-#define TX_SIZE 16
-uint8_t rxBuf[RX_SIZE], txBuf[TX_SIZE];
 
 //FastSerialPort0(Serial);
-SingleSerialPort_x(Serial);
-SingleSerial Serial;
+SingleSerialPort(Serial);
 
 // Local file variables
 //
 int frameNumber = 0;		    // Frame count since last debug serial output
 
-char serial_data[101];          // Array for serial-data 
-unsigned char serial_index = 0; // How many bytes have been received?
+
+#define SERIAL_BUF_LEN 100
+char serial_data[SERIAL_BUF_LEN+1];          // Array for serial-data 
+uint8_t in_count = 0; // How many bytes have been received?
 char string_started = 0;        // Only saves data if string starts with right byte
 
 /*
@@ -63,13 +60,13 @@ char outputAcc = 0;             // Stream accelerometer data to host
 */
 char outputMagAcc = 0;          // Stream mag and accell data (for calibration on PC)
 char outputTrack = 0;	        // Stream angle data to host
-char outputDbg=0;
+uint8_t outputDbg=0;
 
 // Keep track of button press
 char lastButtonState = 0;           // 0 is not pressed, 1 is pressed
 unsigned long buttonDownTime = 0;   // the system time of the press
 char pauseToggled = 0;              // Used to make sure we toggle pause only once per hold
-char ht_paused = 0;
+byte ht_paused = 0;
 
 // External variables (defined in other files)
 //
@@ -80,7 +77,8 @@ extern char resetValues;
 extern settings sets;
 
 float dynFactor=1;
-
+bool do_output=false;
+uint8_t start_count = SAMPLERATE / 2; // reset after 0.5 seconds
 
 // End settings   
 
@@ -91,32 +89,26 @@ float dynFactor=1;
 //--------------------------------------------------------------------------------------
 void setup()
 {
-    Serial.begin(SERIAL_BAUD, rxBuf, RX_SIZE, txBuf, TX_SIZE);
+    Serial.begin(SERIAL_BAUD);
 
     pinMode(PPM_OUT_PIN,OUTPUT); 
     
     pinMode(BUTTON_INPUT,INPUT);// Set button pin to input:
     digitalWrite(BUTTON_INPUT,HIGH);// Set internal pull-up resistor. 
   
-    digitalWrite(0,LOW); // pull-down resistor
-    digitalWrite(1,LOW);
-    digitalWrite(2,HIGH);
-    digitalWrite(3,HIGH);  
-  
     pinMode(ARDUINO_LED,OUTPUT);    // Arduino LED
     digitalWrite(ARDUINO_LED, HIGH);
+
+#ifdef HEARTBEAT_LED
+    pinMode(HEARTBEAT_LED,OUTPUT);    // Arduino LED
+    digitalWrite(HEARTBEAT_LED, LOW);
+#endif
     
-
-    Wire.begin();               // Start I2C
-
-
-    byte vers=EEPROM.read(0); // first byte
+    byte vers= eeprom_read_byte(0); // first byte
     
     // If the device have just been programmed, write initial config/values to EEPROM:
     if ( vers != EEPROM_VERSION) {
-//#if (DEBUG)
-        Serial.printf_P(PSTR("New board (%d) - saving default values!\n"),vers);
-//#endif    
+        serial_printi_1(PSTR("New board (%d) - saving default values!\n"),vers);
 	clearSettings();
     
         InitSensors();
@@ -132,84 +124,171 @@ void setup()
     CalibrateAccel();
     CalibrateMag();
 
-    ResetCenter();
-//    resetValues=1;
-
+    resetValues=1;
 
 #if FATSHARK_HT_MODULE
     pinMode(BUZZER,OUTPUT);         // Buzzer
-    digitalWrite(BUZZER, HIGH);
-    // Give it time to be noticed, then turn it off
-    delay(100); // Note: only use delay here. This won't work when Timer0 is repurposed later in InitTimerInterrupt
+    digitalWrite(BUZZER, HIGH);    // Give it time to be noticed, then turn it off
+    delay(100); 
+//    serial_print_P(PSTR("#beep\n"));
+
     digitalWrite(BUZZER, LOW);
 #endif
 
-//
+
     InitTimerInterrupt();        // Start timer interrupt (for sensors)
     InitPWMInterrupt();         // Start PWM interrupt  
 
     digitalWrite(ARDUINO_LED, LOW); //ready
 
-#if DEBUG
-//    DebugOutput(); - not works
-#endif
-
-    Serial.print_P(PSTR("$OK!$\n"));
-
+    serial_print_P(PSTR("$OK!$\n"));
 }
 
-int tail_cmp( char *pat){
-    char *str=&serial_data[serial_index];
-    int len=strlen(pat);
-    return !strncmp(str-len,pat,len);
+int tail_cmp(const char *pat){
+    uint8_t inp_len = strlen(serial_data);
+    char *str=&serial_data[inp_len];
+    uint8_t len=strlen_P(pat);
+
+    if(len>=inp_len) return false;
+    
+//Serial.printf_P(PSTR("Compare %s-%S\n"), str-len, pat);
+    return !strncmp_P(str-len,pat,len);
 }
 
 
-void parse_data(byte off, int *valuesReceived, byte n) {
+uint8_t parse_data(byte off, float *valuesReceived, byte n) {
     byte comma_index = 0;
-    byte neg=0;
 
 #if DEBUG
-        int *ptr0=valuesReceived;
+        float *ptr0=valuesReceived;
 #endif
 
-    for (byte k = 0; k < serial_index - off && comma_index < n; k++) {
+    for (byte k = 0; k < in_count - off && comma_index < n; k++) {
 
 #if 0 && DEBUG
-        Serial.print(serial_data[k]);
+        serial_print(serial_data[k]);
 #endif
 
-        // Looking for comma
-        if (serial_data[k] == ',') {
-    	    if(neg){
-    		*valuesReceived = -*valuesReceived;
-    		neg=0;
-    	    }
-            comma_index++;
-            valuesReceived++;
-        } else if (serial_data[k] == '-') {
-    	    neg=1;
-        } else  {
-            *valuesReceived = *valuesReceived * 10 + (serial_data[k] - '0');
+        *valuesReceived = atof(&serial_data[k]); // parse number
+
+        while(serial_data[k]){
+            if(serial_data[k++]==',') break; // skip parsed number
         }
+        
+        if(serial_data[k]==0) break;
+        
+        comma_index++;
+        valuesReceived++;
     }
 
-
-    if(neg){ // the last one
-	*valuesReceived = -*valuesReceived;
-	neg=0;
-    }
-
-#if 0 && DEBUG
-                Serial.print("\n>");
-                for (unsigned char k = 0; k < comma_index+1; k++) {
-                    Serial.print(ptr0[k]); 
-                    Serial.write(',');
-                }
-                Serial.println();
-#endif
-
+    return comma_index;
 }
+
+
+
+
+void parseCalibData(float div, uint16_t offs, uint8_t size){
+    float valuesReceived[5] = {0,0,0,0,0};
+
+    parse_data(3, valuesReceived, 5);
+
+    float *fp = (float *)((byte *)(&sets) + offs);
+
+    fp[0] = float_div(valuesReceived[0],div);
+    fp[1] = float_div(valuesReceived[1],div);
+    fp[2] = float_div(valuesReceived[2],div);
+
+    in_count = 0;
+    string_started = 0; 
+
+    WriteSets(offs, size );
+}
+
+
+uint32_t max_loop_time=0;
+
+
+
+
+
+
+/////////////////////
+static const PROGMEM char cmd01[] = "CH"; 
+#define CMD_CH 1
+static const PROGMEM char cmd02[] = "HE";
+#define CMD_HE 2
+static const PROGMEM char cmd03[] = "DEBUG";
+#define CMD_DEBUG 3
+static const PROGMEM char cmd04[] = "VERS";
+#define CMD_VERS 4
+static const PROGMEM char cmd05[] = "CMAS";
+#define CMD_CMAS 5
+static const PROGMEM char cmd06[] = "CMAE";
+#define CMD_CMAE 6
+static const PROGMEM char cmd07[] = "PLST";
+#define CMD_PLST 7
+static const PROGMEM char cmd08[] = "PLEN";
+#define CMD_PLEN 8
+static const PROGMEM char cmd09[] = "RESE";
+#define CMD_RESE 9
+static const PROGMEM char cmd10[] = "SAVE";
+#define CMD_SAVE 10
+static const PROGMEM char cmd11[] = "MAG";
+#define CMD_MAG 11
+static const PROGMEM char cmd12[] = "MGA";
+#define CMD_MGA 12
+static const PROGMEM char cmd13[] = "MDA";
+#define CMD_MDA 13
+static const PROGMEM char cmd14[] = "ACC";
+#define CMD_ACC 14
+static const PROGMEM char cmd15[] = "ACG";
+#define CMD_ACG 15
+static const PROGMEM char cmd16[] = "ACD";
+#define CMD_ACD 16
+static const PROGMEM char cmd17[] = "GSET";
+#define CMD_GSET 17
+
+static const PROGMEM char cmd18[] = "DBG1";
+#define CMD_DBG1 18
+static const PROGMEM char cmd19[] = "DBG2";
+#define CMD_DBG2 19
+static const PROGMEM char cmd20[] = "DBG3";
+#define CMD_DBG3 20
+static const PROGMEM char cmd21[] = "DBG4";
+#define CMD_DBG4 21
+static const PROGMEM char cmd22[] = "DBGE";
+#define CMD_DBGE 22
+static const PROGMEM char cmd23[] = "DBGC";
+#define CMD_DBGC 23
+static const PROGMEM char cmd24[] = "CLR";
+#define CMD_CLR 24
+
+static const PROGMEM char * const commands[]={
+    cmd01, cmd02, cmd03, cmd04, cmd05,
+    cmd06, cmd07, cmd08, cmd09, cmd10,
+    cmd11, cmd12, cmd13, cmd14, cmd15,
+    cmd16, cmd17, cmd18, cmd19, cmd20,
+    cmd21, cmd22, cmd23, cmd24, 
+};
+
+#define NUM_COMMANDS (sizeof( commands)/sizeof(char *))
+
+////////////////////
+
+
+uint8_t parse_command(){
+    for(uint8_t i=0; i<NUM_COMMANDS;i++){
+        if( tail_cmp(pgm_read_word(&commands[i])) ) return i+1; // not 0
+    }
+    return 0;
+}
+
+
+
+
+
+
+
 
 //--------------------------------------------------------------------------------------
 // Func: loop
@@ -217,6 +296,10 @@ void parse_data(byte off, int *valuesReceived, byte n) {
 //--------------------------------------------------------------------------------------
 void loop()
 {  
+
+    interrupts();
+    
+    
     // Check input button for reset/pause request
     char buttonPressed = (digitalRead(BUTTON_INPUT) == 0);
     byte c;
@@ -242,42 +325,79 @@ void loop()
     
 
 #if defined(ADC_PIN)
-   int val = analogRead(ADC_PIN);
+  uint16_t val = analogRead(ADC_PIN);
    
    //0-1023 convert to 0.2..5
    dynFactor = (val / 1023) * (5-0.2)  + 0.2;
 #endif
   
     
-    // All this is used for communication with GUI 
-    //
-    if (Serial.available()>0)  {
-        if (string_started == 1)  {
-            // Read incoming byte
-            serial_data[serial_index++] = Serial.read();
-#ifdef ECHO
-           Serial.write(serial_data[serial_index-1]);
+// All this is used for communication with GUI 
+
+    
+    bool got_string=false;
+
+    while(Serial.available_S()) {
+        char c = Serial.read_S();
+
+//Serial.printf_P(PSTR("\n#<%x\n"),c);
+
+        switch(c) {
+        case '\r':
+            break;
+    
+        case '\n':
+            if(in_count) got_string=true;
+            in_count=0;
+            break;
+
+        default:
+            if(in_count >= SERIAL_BUF_LEN) in_count=0;
+
+            serial_data[in_count++] = c;
+            serial_data[in_count]=0; // closed string
+        }
+    }
+    
+
+#if defined(DEBUG) && 0
+
+    if (got_string){
+            Serial.printf_P(PSTR("\n#<%s\n"),serial_data);
+    }
 #endif
-            // If string ends with "CH" it's channel configuration, that have been received.
-            // String must always be 12 chars/bytes and ending with CH to be valid. 
-            if (serial_index == 14 && tail_cmp("CH"))  {               // To keep it simple, we will not let the channels be 0-initialized, but
+    
+    
+    if (got_string && serial_data[0] == '$')  { // command
+        switch(parse_command()) {
+        case 0: // not found            
+            Serial.printf_P(PSTR("\n#bad command: %s\n"),serial_data);
+            break;
+
+        case CMD_CLR: // clear EEPROM to defaults
+            clearSettings();
+            WriteSets();
+            serial_print_P(PSTR("EEPROM cleared\n"));
+
+            break;
+        
+        case CMD_CH: {  // If string ends with "CH" it's channel configuration, that have been received.
+                    // String must always be 12 chars/bytes and ending with CH to be valid. 
+
+                float valuesReceived[12] = {0,0,0,0,0,0,0,0,0,0,0,0,};
+
+		uint8_t n = parse_data(2, valuesReceived, 12);
 							                // start from 1 to match actual channels. 
-                for (unsigned char i = 0; i < 13; i++) {
+                for (uint8_t i = 0; i < 12; i++) {
                     // Update the dedicated PPM-in -> PPM-out array for faster performance.
-                    if ((serial_data[i] - 48) < 14) {
-                        sets.PpmIn_PpmOut[serial_data[i]-48] = i + 1;
-                    }
+                    sets.PpmIn_PpmOut[(int)valuesReceived[i]] = i + 1;                    
                 }
                
-                Serial.print_P(PSTR("Channel mapping received\n"));
-
-               // Reset serial_index and serial_started
-               serial_index = 0;
-               string_started = 0;
+                serial_print_P(PSTR("Channel mapping received\n"));
             }
+            break;
             
-            // Configure headtracker
-            else if (tail_cmp("HE"))  {
+        case CMD_HE: {           // Configure headtracker
                 // HT parameters are passed in from the PC in this order:
                 //
                 // 0 tiltRollBeta      
@@ -304,21 +424,21 @@ void loop()
                 // Parameters from the PC client need to be scaled to match our local
                 // expectations
 
-                Serial.print_P(PSTR("HT config received: "));
+                serial_print_P(PSTR("HT config received: "));
            
-                int valuesReceived[20] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+                float valuesReceived[20] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 
 		parse_data(2, valuesReceived, 20);
 
-                sets.tiltRollBeta  = (float)valuesReceived[0] / 100;  
-                sets.panBeta       = (float)valuesReceived[1] / 100;
-                sets.gyroWeightTiltRoll = (float)valuesReceived[2] / 100;
-                sets.gyroWeightPan = (float)valuesReceived[3] / 100;
-                sets.tiltFactor    = (float)valuesReceived[4] / 10;
-                sets.panFactor     = (float)valuesReceived[5] / 10;
-                sets.rollFactor    = (float)valuesReceived[6] / 10;
+                sets.tiltRollBeta       = valuesReceived[0];  
+                sets.panBeta            = valuesReceived[1];
+                sets.gyroWeightTiltRoll = 1/valuesReceived[2];
+                sets.gyroWeightPan      = 1/valuesReceived[3];
+                sets.tiltFactor         = float_div(valuesReceived[4], 10);
+                sets.panFactor          = float_div(valuesReceived[5], 10);
+                sets.rollFactor         = float_div(valuesReceived[6], 10);
 
-                sets.servoReverseMask = (unsigned char)valuesReceived[7];
+                sets.servoReverseMask = (uint8_t)valuesReceived[7];
 
                 if(sets.servoReverseMask & HT_PAN_REVERSE_BIT) 
                     sets.panFactor *= -1;
@@ -354,80 +474,48 @@ void loop()
 
                 SaveSettings();
 
-                serial_index = 0;
-                string_started = 0;
             } // end configure headtracker
 
-            // Debug info
-            else if (tail_cmp("DEBUG")) {
-                DebugOutput();
-                serial_index = 0;
-                string_started = 0; 
-            }
-
-            // Firmware version requested
-            else if (tail_cmp("VERS")) {
-                Serial.printf_P(PSTR("FW: %S\n"), FIRMWARE_VERSION_FLOAT);
-                serial_index = 0;
-                string_started = 0; 
-            }
-          
-            // Start mag and accel data stream
-            else if (tail_cmp("CMAS"))  {  
-        	CalibrationStart();
-                outputMagAcc = 1;
-//                outputMag = 0;
-//                outputAcc = 0;
-                outputTrack = 0;
-                serial_index = 0;
-                string_started = 0;
-            }        
-
-            // Stop mag and accel data stream
-            else if (tail_cmp("CMAE")) {
-                outputMagAcc = 0;
-//                outputMag = 0;
-                outputTrack = 0;
-//                outputAcc = 0;
-                serial_index = 0;
-                string_started = 0;
-            }        
-
-            // Start tracking data stream
-            else if (tail_cmp("PLST")) {
-                outputTrack = 1;
-                outputMagAcc = 0;
-//                outputMag = 0;
-//                outputAcc = 0;
-                serial_index = 0;
-                string_started = 0; 
-            }        
-
-            // Stop tracking data stream
-            else if (tail_cmp("PLEN")) {
-                outputTrack = 0;
-//                outputMag = 0;
-//                outputAcc = 0;
-                outputMagAcc = 0;
-                serial_index = 0;
-                string_started = 0; 
-            }
-
-            // reset center - like button press
-            else if (tail_cmp("RESE")) {
-                resetValues=1;
-                serial_index = 0;
-                string_started = 0; 
-                Serial.print_P(PSTR("Center set!"));
-            }          
-
-            // Save RAM settings to EEPROM
-            else if (tail_cmp("SAVE")) {
-                SaveSettings();
-                serial_index = 0;
-                string_started = 0; 
-            }          
-
+            break;
+            
+        case CMD_DEBUG:          // Debug info
+            DebugOutput();
+            break;
+            
+        case CMD_VERS:            // Firmware version requested
+            Serial.printf_P(PSTR("FW: %S\n"), FIRMWARE_VERSION);
+            break;
+            
+        case CMD_CMAS:             // Start mag and accel data stream
+            CalibrationStart(); // reset normas
+            outputMagAcc = 1;
+            outputTrack = 0;
+            break;
+            
+        case CMD_CMAE:             // Stop mag and accel data stream
+            outputMagAcc = 0;
+            outputTrack = 0;
+            break;
+            
+        case CMD_PLST:             // Start tracking data stream
+            outputTrack = 1;
+            outputMagAcc = 0;
+            break;
+            
+        case CMD_PLEN:            // Stop tracking data stream
+            outputTrack = 0;
+            outputMagAcc = 0;
+            
+            break;
+            
+        case CMD_RESE:             // reset center - like button press
+            resetValues=1;
+            serial_print_P(PSTR("Center set!"));
+            break;
+            
+        case CMD_SAVE:             // Save RAM settings to EEPROM
+            SaveSettings();
+            break;
           
             // Calibrate gyro
 /*            else if (tail_cmp("CALG")) { 
@@ -435,58 +523,43 @@ void loop()
 //              SaveSettings();
                
 		Serial.printf_P(PSTR("Gyro offset measured: %f,%f,%f\n"), sets.gyroOff[0], sets.gyroOff[1], sets.gyroOff[2]);
-
-                serial_index = 0;
-                string_started = 0; 
             }
+            break;
 */
 #if DEBUG
-            else if (tail_cmp("DBG1"))  {  
-                outputDbg = 1;
-                serial_index = 0;
-                string_started = 0; 
-            }        
-
-            else if (tail_cmp("DBG2"))  {  
-                outputDbg = 2;
-                serial_index = 0;
-                string_started = 0; 
-            }        
-
-
-            else if (tail_cmp("DBG3")) {
-                outputDbg = 3;
-                serial_index = 0;
-                string_started = 0; 
-            }
-
-
-            else if (tail_cmp("DBG4")) {
-                outputDbg = 4;
-                serial_index = 0;
-                string_started = 0; 
-            }        
-
-#if PPM_IN
-            else if (tail_cmp("DBGC")) {
-                outputDbg = 5;
-                serial_index = 0;
-                string_started = 0; 
-            }        
-
+            
+        case CMD_DBG1:
+            outputDbg = 1;
+            break;
+            
+        case CMD_DBG2: 
+            outputDbg = 2;
+            break;
+            
+        case CMD_DBG3:
+            outputDbg = 3;
+            break;
+            
+        case CMD_DBG4:
+            outputDbg = 4;
+            break;
+            
+#if PPM_IN            
+        case CMD_DBGC:
+            outputDbg = 5;
+            break;
 #endif
-            // Stop debug data stream 
-            else if (tail_cmp("DBGE")) {  
-        	outputDbg=0;
-                serial_index = 0;
-                string_started = 0; 
-            }
+            
+        case CMD_DBGE:            // Stop debug data stream 
+            outputDbg=0;
+            break;
 #endif
-
-            // Store magnetometer offset
-            else if (tail_cmp("MAG")) {
-                Serial.println(serial_data);
-                int valuesReceived[5] = {0,0,0,0,0};
+            
+        case CMD_MAG: {            // Store magnetometer offset
+                parseCalibData(10, offsetof(settings, magOffset ), sizeof(sets.magOffset));
+                
+                /*
+                float valuesReceived[5] = {0,0,0,0,0};
 
 		parse_data(3, valuesReceived, 5);
 
@@ -495,42 +568,61 @@ void loop()
                 sets.magOffset[1] = valuesReceived[1]/10.0;
                 sets.magOffset[2] = valuesReceived[2]/10.0;
 
-                serial_index = 0;
-                string_started = 0; 
-
-                //SaveMagData();                
                 WriteSets(offsetof(settings, magOffset ), sizeof(sets.magOffset));
+                */
 #if DEBUG
-		Serial.printf_P(PSTR("Mag offset stored %f,%f,%f\n"),  sets.magOffset[0], sets.magOffset[1], sets.magOffset[2]);
+		serial_printf_3(PSTR("Mag offset stored %f,%f,%f\n"),  sets.magOffset[0], sets.magOffset[1], sets.magOffset[2]);
 #endif
             }
 
-            // Store magnetometer gain
-            else if (tail_cmp("MGA")) {
-                Serial.println(serial_data);
-                int valuesReceived[5] = {0,0,0,0,0};
+            break;
+            
+        case CMD_MGA: {           // Store magnetometer gain
+
+                parseCalibData(10000, offsetof(settings, magGain ), sizeof(sets.magGain));
+            /*
+                float valuesReceived[5] = {0,0,0,0,0};
 
 		parse_data(3, valuesReceived, 5);
 
-                // Y and Z are swapped on purpose - no more!.
                 sets.magGain[0] = valuesReceived[0]/10000.0;
                 sets.magGain[1] = valuesReceived[1]/10000.0;
                 sets.magGain[2] = valuesReceived[2]/10000.0;
 
-                serial_index = 0;
-                string_started = 0; 
-
-                //SaveMagGain();                
                 WriteSets(offsetof(settings, magGain ), sizeof(sets.magGain));
+            */
 #if DEBUG
-		Serial.printf_P(PSTR("Mag gain stored %f,%f,%f\n"),  sets.magGain[0], sets.magGain[1], sets.magGain[2]);
+		serial_printf_3(PSTR("Mag gain stored %f,%f,%f\n"),  sets.magGain[0], sets.magGain[1], sets.magGain[2]);
 #endif
             }
+            break;
+            
+        case CMD_MDA: {            // Store magnetometer diag offs
+                parseCalibData(10000, offsetof(settings, magDiagOff ), sizeof(sets.magDiagOff));
+                
+            /*
+                float valuesReceived[5] = {0,0,0,0,0};
 
-            // Store accelerometer offset
-            else if (tail_cmp("ACC")) {
-                Serial.println(serial_data);
-                int valuesReceived[5] = {0,0,0,0,0};
+		parse_data(3, valuesReceived, 5);
+
+                sets.magDiagOff[0] = valuesReceived[0]/10000.0;
+                sets.magDiagOff[1] = valuesReceived[1]/10000.0;
+                sets.magDiagOff[2] = valuesReceived[2]/10000.0;
+
+                WriteSets(offsetof(settings, magDiagOff ), sizeof(sets.magDiagOff));
+            */
+#if DEBUG
+		serial_printf_3(PSTR("Mag diag offs stored %f,%f,%f\n"),  sets.magDiagOff[0], sets.magDiagOff[1], sets.magDiagOff[2]);
+#endif
+            }
+            break;
+            
+        case CMD_ACC: {            // Store accelerometer offset
+
+                parseCalibData(10, offsetof(settings, accOffset ), sizeof(sets.accOffset));
+
+            /*
+                float valuesReceived[5] = {0,0,0,0,0};
 
 		parse_data(3, valuesReceived, 5);
 
@@ -538,20 +630,22 @@ void loop()
                 sets.accOffset[1] = valuesReceived[1]/10.0;
                 sets.accOffset[2] = valuesReceived[2]/10.0;
 
-                serial_index = 0;
-                string_started = 0; 
-
-                //SaveAccelData();
                 WriteSets(offsetof(settings, accOffset ), sizeof(sets.accOffset));
+            */
+            
 #if DEBUG
-		Serial.printf_P(PSTR("Acc offset stored %f,%f,%f\n"),  sets.accOffset[0], sets.accOffset[1], sets.accOffset[2]);
+		serial_printf_3(PSTR("Acc offset stored %f,%f,%f\n"),  sets.accOffset[0], sets.accOffset[1], sets.accOffset[2]);
 #endif
             }
 
-            // Store accelerometer gain
-            else if (tail_cmp("ACG")) {
-                Serial.println(serial_data);
-                int valuesReceived[5] = {0,0,0,0,0};
+            break;
+            
+        case CMD_ACG: {            // Store accelerometer gain
+            
+                parseCalibData(10000, offsetof(settings, accGain ), sizeof(sets.accGain));
+                
+            /*                
+                float valuesReceived[5] = {0,0,0,0,0};
 
 		parse_data(3, valuesReceived, 5);
 
@@ -559,120 +653,126 @@ void loop()
                 sets.accGain[1] = valuesReceived[1]/10000.0;
                 sets.accGain[2] = valuesReceived[2]/10000.0;
 
-                serial_index = 0;
+                in_count = 0;
                 string_started = 0; 
 
 //                SaveAccelGain();
                 WriteSets(offsetof(settings, accGain ), sizeof(sets.accGain));
+            */
 #if DEBUG
-		Serial.printf_P(PSTR("Acc gain stored %f,%f,%f\n"),  sets.accGain[0], sets.accGain[1], sets.accGain[2]);
+		serial_printf_3(PSTR("Acc gain stored %f,%f,%f\n"),  sets.accGain[0], sets.accGain[1], sets.accGain[2]);
+#endif
+            }
+            break;
+            
+        case CMD_ACD: {
+                parseCalibData(10000, offsetof(settings, accDiagOff), sizeof(sets.accDiagOff));
+                
+            /*
+                float valuesReceived[5] = {0,0,0,0,0};
+
+		parse_data(3, valuesReceived, 5);
+
+                sets.accDiagOff[0] = valuesReceived[0]/10000.0;
+                sets.accDiagOff[1] = valuesReceived[1]/10000.0;
+                sets.accDiagOff[2] = valuesReceived[2]/10000.0;
+
+                in_count = 0;
+                string_started = 0; 
+
+//                SaveAccelGain();
+                WriteSets(offsetof(settings, accDiagOff ), sizeof(sets.accDiagOff));
+            */
+#if DEBUG
+		serial_printf_3(PSTR("Acc gain stored %f,%f,%f\n"),  sets.accDiagOff[0], sets.accDiagOff[1], sets.accDiagOff[2]);
 #endif
             }
 
-            // Retrieve settings
-            else if (tail_cmp("GSET")) {
+            break;
+            
+        case CMD_GSET: {        // Retrieve settings
                 // Get Settings. Scale our local values to
                 // real-world values usable on the PC side.
                 //
-                Serial.print_P(PSTR("$SET$")); // something recognizable in the stream
-
-		char c=',';
-                Serial.print(sets.tiltRollBeta * 100);
-                Serial.write(c);
-                Serial.print(sets.panBeta * 100);
-                Serial.write(c);
-                Serial.print(sets.gyroWeightTiltRoll * 100);  
-                Serial.write(c);
-                Serial.print(sets.gyroWeightPan * 100);
-                Serial.write(c);
-                Serial.print(sets.tiltFactor * 10);
-                Serial.write(c);
-                Serial.print(sets.panFactor * 10);
-                Serial.write(c);
-                Serial.print(sets.rollFactor * 10);
-                Serial.write(c);
-                Serial.print(sets.servoReverseMask);
-                Serial.write(c);
-                Serial.print(sets.servoPanCenter);
-                Serial.write(c);
-                Serial.print(sets.panMinPulse);
-                Serial.write(c);
-                Serial.print(sets.panMaxPulse);
-                Serial.write(c);
-                Serial.print(sets.servoTiltCenter);
-                Serial.write(c);
-                Serial.print(sets.tiltMinPulse);
-                Serial.write(c);
-                Serial.print(sets.tiltMaxPulse);
-                Serial.write(c);
-                Serial.print(sets.servoRollCenter);
-                Serial.write(c);
-                Serial.print(sets.rollMinPulse);
-                Serial.write(c);
-                Serial.print(sets.rollMaxPulse);
-                Serial.write(c);
-                Serial.print(sets.htChannels[0]);
-                Serial.write(c);
-                Serial.print(sets.htChannels[1]);
-                Serial.write(c);
-                Serial.println(sets.htChannels[2]);
-
-//                Serial.printf_P(PSTR("Settings Retrieved!\n"));
-
-                serial_index = 0;
-                string_started = 0;
+                float wgr, wgp;
+                
+                wgr = (sets.gyroWeightTiltRoll==0) ?10: 1/sets.gyroWeightTiltRoll;
+                wgp = (sets.gyroWeightPan==0)      ?10: 1/sets.gyroWeightPan;
+                
+                serial_printf_3a(PSTR("$SET$%f,%f,%f,"),  sets.tiltRollBeta, sets.panBeta, wgr);
+                serial_printf_3a(PSTR("%f,%f,%f,"),       wgp, sets.tiltFactor * 10, sets.panFactor * 10);
+                serial_printf_3a(PSTR("%f,%6.0f,%6.0f,"), sets.rollFactor * 10, sets.servoReverseMask, sets.servoPanCenter);
+                serial_printf_3a(PSTR("%6.0f,%6.0f,%6.0f,"),  sets.panMinPulse, sets.panMaxPulse, sets.servoTiltCenter);
+                serial_printf_3a(PSTR("%6.0f,%6.0f,%6.0f,"),  sets.tiltMinPulse, sets.tiltMaxPulse, sets.servoRollCenter);
+                serial_printf_3a(PSTR("%6.0f,%6.0f,%6.0f,"),  sets.rollMinPulse, sets.rollMaxPulse, sets.htChannels[0]);
+                serial_printf_3a(PSTR("%6.0f,%6.0f,%6.0f\n"), sets.htChannels[1], sets.htChannels[2], 0);
             }
-            else if (serial_index > 100)
-            {
-                // If more than 100 bytes have been received, the string is not valid.
-                // Reset and "try again" (wait for $ to indicate start of new string). 
-                serial_index = 0;
-                string_started = 0;
-            }
-        }
-        else if ((c=Serial.read()) == '$')
-        {
-            string_started = 1;
-#ifdef ECHO
-            Serial.write('$');
-#endif
-        }else {
-#ifdef ECHO
-	    Serial.write(c);
-#endif
-    	}
-    } // serial port input
+            break;
+        } // switch
+    } // if($)
+
 
     // if "read_sensors" flag is set high, read sensors and update
     if (read_sensors == 1 && ht_paused == 0) {
+
+        uint32_t t=micros();
+
         GyroCalc();
         AccelCalc();
         MagCalc();
-        FilterSensorData();
 
-        // Only output this data every X frames.
-        if (frameNumber++ >= SERIAL_OUTPUT_FRAME_INTERVAL) {
-            if (outputTrack)            trackerOutput();
-            else if (outputMagAcc)      calMagAccOutput();
-//            else if (outputMag)         calMagOutput(); 
-//            else if (outputAcc)         calAccOutput();
-            
-#if DEBUG
-            if(outputDbg == 1)		testAccOutput();
-            if(outputDbg == 2)		testGyroOutput();
-            if(outputDbg == 3)		testMagOutput();
-            if(outputDbg == 4)		testAllData();
- #if PPM_IN
-            if(outputDbg == 5)		testPPM_in();
- #endif
-            outputDbg=0; // only once
+#ifdef HEARTBEAT_LED
+        digitalWrite(HEARTBEAT_LED, HIGH);
 #endif
-            
-            frameNumber = 0; 
-        }
+
+
+        FilterSensorData(); // main calculations
 
         // Will first update read_sensors when everything is done.  
         read_sensors = 0;
+
+
+        t = micros()-t;
+        if(t>max_loop_time) max_loop_time=t;
+
+        if(start_count){
+            start_count--;
+            if(start_count==0) resetValues=1; // auto-reset after start
+            
+        }
+
+#ifdef HEARTBEAT_LED
+        digitalWrite(HEARTBEAT_LED, LOW);
+#endif
+
+        // Only output this data every X frames.
+        frameNumber++;
+
+        extern uint8_t time_out;
+        extern uint32_t isr_time;
+        if(time_out) {
+            serial_printl_1(PSTR("\n#loop timeout! loop=%ld\n"), max_loop_time);
+//            serial_printl_1(PSTR(" isr time=%ld\n"), isr_time);
+            max_loop_time=0;
+            time_out=0;
+        } else {        
+            //if(Serial.tx_empty()) { // at full speed - but GUI can't consume such stream :(
+            if (frameNumber >= SERIAL_OUTPUT_FRAME_INTERVAL && (outputTrack || outputMagAcc)) {    
+                frameNumber=0;
+                if (outputTrack)       trackerOutput();
+                if (outputMagAcc)      calMagAccOutput();
+            }
+        }    
+
+#if DEBUG
+        if (frameNumber >= SERIAL_DEBUG_FRAME_INTERVAL) {
+            do_output=true;
+
+//            outputDbg=0; // only once
+            frameNumber = 0; 
+        }
+#endif
+        
     }
 }
 
@@ -684,7 +784,7 @@ void loop()
 inline void SaveSettings()
 {  
     WriteSets();
-    Serial.print_P(PSTR("Settings saved!\n"));
+    serial_print_P(PSTR("Settings saved!\n"));
 }
 
 
@@ -706,36 +806,28 @@ inline void GetSettings()
 //--------------------------------------------------------------------------------------
 void DebugOutput()
 {
-    Serial.print_P(PSTR("\n\n\n------ Debug info------\n"));
+    serial_print_P(PSTR("\n\n\n------ Debug info------\n"));
 
 
-    Serial.printf_P(PSTR("FW Version: %S"),FIRMWARE_VERSION_FLOAT);
+    Serial.printf_P(PSTR("FW Version: %S\n"),FIRMWARE_VERSION);
 
-    Serial.printf_P(PSTR("Mag type: %i\n"), compass);
+    serial_printl_1(PSTR("loop time: %ld\n"), max_loop_time);
+    max_loop_time=0;
 
-/*    
-    Serial.printf_P(PSTR("tiltRollBeta: %f\n"),sets.tiltRollBeta);
-    Serial.printf_P(PSTR("panBeta: %f\n"),sets.panBeta);
+    serial_printi_1(PSTR("Mag type: %i\n"), compass_id);
+
+    serial_printf_3(PSTR("Gyro offset stored %f,%f,%f\n"), sets.gyroOff[0], sets.gyroOff[1], sets.gyroOff[2]);
  
-    Serial.printf_P(PSTR("gyroWeightTiltRoll: %f\n"),sets.gyroWeightTiltRoll);
-    Serial.printf_P(PSTR("GyroWeightPan: %f\n"), sets.gyroWeightPan); 
-    Serial.printf_P(PSTR("servoPanCenter: %d\n"),sets.servoPanCenter); 
-    Serial.printf_P(PSTR("servoTiltCenter: %d\n"),sets.servoTiltCenter); 
-    Serial.printf_P(PSTR("servoRollCenter: %d\n"), sets.servoRollCenter); 
+    serial_printf_3(PSTR("Mag offset stored %f,%f,%f\n"),  sets.magOffset[0], sets.magOffset[1], sets.magOffset[2]);
+    serial_printf_3(PSTR("Mag gain stored %f,%f,%f\n"),  sets.magGain[0], sets.magGain[1], sets.magGain[2]);
+    serial_printf_3(PSTR("Mag diag stored %f,%f,%f\n"),  sets.magDiagOff[0], sets.magDiagOff[1], sets.magDiagOff[2]);
+ 
+    serial_printf_3(PSTR("Acc offset stored %f,%f,%f\n"),  sets.accOffset[0], sets.accOffset[1], sets.accOffset[2]);
+    serial_printf_3(PSTR("Acc gain stored %f,%f,%f\n"),  sets.accGain[0], sets.accGain[1], sets.accGain[2]);
+    serial_printf_3(PSTR("Acc diag stored %f,%f,%f\n"),  sets.accDiagOff[0], sets.accDiagOff[1], sets.accDiagOff[2]);
 
-    Serial.printf_P(PSTR("tiltFactor: %f\n"),sets.tiltFactor);
-    Serial.printf_P(PSTR("panFactor: %f\n"), sets.panFactor);
-    Serial.printf_P(PSTR("rollFactor: %f\n"), sets.rollFactor);
-*/
-    Serial.printf_P(PSTR("Gyro offset stored %f,%f,%f\n"), sets.gyroOff[0], sets.gyroOff[1], sets.gyroOff[2]);
- 
-    Serial.printf_P(PSTR("Mag offset stored %f,%f,%f\n"),  sets.magOffset[0], sets.magOffset[1], sets.magOffset[2]);
-    Serial.printf_P(PSTR("Mag gain stored %f,%f,%f\n"),  sets.magGain[0], sets.magGain[1], sets.magGain[2]);
- 
-    Serial.printf_P(PSTR("Acc offset stored %f,%f,%f\n"),  sets.accOffset[0], sets.accOffset[1], sets.accOffset[2]);
-    Serial.printf_P(PSTR("Acc gain stored %f,%f,%f\n"),  sets.accGain[0], sets.accGain[1], sets.accGain[2]);
 #if PPM_IN
-    Serial.printf_P(PSTR("Input channels detected: %d\n"),  channelsDetected);
+    serial_printi_1(PSTR("Input channels detected: %d\n"),  channelsDetected);
 #endif
     SensorInfoPrint();
 }
@@ -744,46 +836,29 @@ void DebugOutput()
 
 
 void ReadSets(void){
-    int i;
+    uint16_t  i;
     for(i=0; i<sizeof(settings); i++)
-	((byte *)&sets)[i] = EEPROM.read( i ); // EEPROM.read(EEPROM_offs(sets) + i );
+	((byte *)&sets)[i] = eeprom_read_byte((byte *) i ); // EEPROM.read(EEPROM_offs(sets) + i );
 }
 
 
 void WriteSets(void){
     ht_paused=1;
 
-    int i;
-//    noInterrupts();
+    uint16_t i;
     for(i=0; i<sizeof(settings); i++) {
-#if 0 && DEBUG
-        Serial.print( i);
-        Serial.write(' ');
-        Serial.println(((byte *)&sets)[i]); 
-#endif
-	EEPROM.write( i, ((byte *)&sets)[i] ); // .write(EEPROM_offs(sets) + i,...
+	eeprom_write_byte( (byte *)i, ((byte *)&sets)[i] ); // .write(EEPROM_offs(sets) + i,...
     }
-//    interrupts();
     ht_paused=0;
 }
 
-void WriteSets(int addr, int length){
+void WriteSets(uint16_t addr, uint8_t length){
     ht_paused=1;
 
-#if 0 && DEBUG
-Serial.printf_P(PSTR("WriteSets addr=%d len=%d size=%d\n"), addr, length, sizeof(settings));
-#endif
-    int i;
+    uint8_t  i;
 
-//    noInterrupts();
     for(i=0; (addr+i)<sizeof(settings) && i<length; i++) {
-	EEPROM.write( addr+i, ((byte *)&sets)[addr+i] ); // .write(EEPROM_offs(sets) + i,...
-#if 0 && DEBUG
-        Serial.print( addr+i);
-        Serial.write(' ');
-        Serial.println(((byte *)&sets)[addr+i]); 
-#endif
+	eeprom_write_byte( (byte *)(addr+i), ((byte *)&sets)[addr+i] ); // .write(EEPROM_offs(sets) + i,...
     }
-//    interrupts();
     ht_paused=0;
 }

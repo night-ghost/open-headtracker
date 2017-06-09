@@ -20,13 +20,13 @@ using namespace System::Diagnostics;
 //
 value struct HTSETTINGS
 {
-    int LPTiltRoll;         // Firmware: tiltRollBeta
-    int LPPan;              // Firmware: panBeta
-    int GyroWeightTiltRoll; // Firmware: gyroWeightTiltRoll
-    int GyroWeightPan;      // Firmware: GyroWeightPan
-    int ServoGainPan;       // Firmware: tiltFactor
-    int ServoGainTilt;      // Firmware: panFactor
-    int ServoGainRoll;      // Firmware: rollFactor
+    double LPTiltRoll;         // Firmware: tiltRollBeta
+    double LPPan;              // Firmware: panBeta
+    double GyroWeightTiltRoll; // Firmware: gyroWeightTiltRoll
+    double GyroWeightPan;      // Firmware: GyroWeightPan
+    double ServoGainPan;       // Firmware: tiltFactor
+    double ServoGainTilt;      // Firmware: panFactor
+    double ServoGainRoll;      // Firmware: rollFactor
     Byte ServoReverse;      // Firmware: servoReverseMask
     int PanCenter;          // Firmware: servoPanCenter
     int PanMin;             // Firmware: panMinPulse
@@ -70,7 +70,7 @@ public: // methods
 
     System::Void Open(String^ ComPort, boolean ForceOpen ) {
         Port->PortName = ComPort;
-        Port->BaudRate = 57600; //115200;
+        Port->BaudRate = 115200;
         Port->ReadTimeout = 2000;
         try    {
             Port->Open();
@@ -112,7 +112,8 @@ public: // methods
         if (Port->IsOpen)
         {
             Port->DiscardInBuffer();
-            Port->WriteLine(String::Format("$GSET"));
+            //Port->WriteLine(String::Format("$GSET"));
+			Port->WriteLine("$GSET\n");
             String^ Line = ReadData();
             try
             {
@@ -123,31 +124,31 @@ public: // methods
                     System::Globalization::NumberFormatInfo^ fi = ci->NumberFormat;
                     fi->NumberDecimalSeparator = ".";
 
-                    // Par5se the rest of the response
+                    // Parse the rest of the response
                     array<wchar_t>^ delim = {',','\r','\n'};
                     array<String^>^ items = toParse->Split(delim);
                     if ( HT_SETTINGS_COUNT <= items->Length )
                     {
-                        ht.LPTiltRoll = (int)Convert::ToSingle(items[0], fi);
-                        ht.LPPan = (int)Convert::ToSingle(items[1], fi);                 
-                        ht.GyroWeightTiltRoll = (int)Convert::ToSingle(items[2], fi);        
-                        ht.GyroWeightPan = (int)Convert::ToSingle(items[3], fi);         
-                        ht.ServoGainTilt = (int)Convert::ToSingle(items[4], fi);          
-                        ht.ServoGainPan = (int)Convert::ToSingle(items[5], fi);         
-                        ht.ServoGainRoll = (int)Convert::ToSingle(items[6], fi);         
-                        ht.ServoReverse = Convert::ToByte(items[7], 10); 
-                        ht.PanCenter = Convert::ToInt32(items[8], 10);             
-                        ht.PanMin = Convert::ToInt32(items[9], 10);                
-                        ht.PanMax = Convert::ToInt32(items[10], 10);                
-                        ht.TiltCenter = Convert::ToInt32(items[11], 10);            
-                        ht.TiltMin = Convert::ToInt32(items[12], 10);               
-                        ht.TiltMax = Convert::ToInt32(items[13], 10);               
-                        ht.RollCenter = Convert::ToInt32(items[14], 10);            
-                        ht.RollMin = Convert::ToInt32(items[15], 10);               
-                        ht.RollMax = Convert::ToInt32(items[16], 10);               
-                        ht.PanCh = Convert::ToByte(items[17], 10); 
-                        ht.TiltCh = Convert::ToByte(items[18], 10);
-                        ht.RollCh = Convert::ToByte(items[19], 10);
+                        ht.LPTiltRoll = Convert::ToDouble(items[0], fi);
+                        ht.LPPan = Convert::ToDouble(items[1], fi);                 
+                        ht.GyroWeightTiltRoll =Convert::ToDouble(items[2], fi);        
+                        ht.GyroWeightPan = Convert::ToDouble(items[3], fi);         
+                        ht.ServoGainTilt = Convert::ToDouble(items[4], fi);          
+                        ht.ServoGainPan = Convert::ToDouble(items[5], fi);         
+                        ht.ServoGainRoll = Convert::ToDouble(items[6], fi);         
+                        ht.ServoReverse = (byte)Convert::ToSingle(items[7], fi); 
+                        ht.PanCenter = (int)Convert::ToSingle(items[8], fi);             
+                        ht.PanMin = (int)Convert::ToSingle(items[9], fi);                
+                        ht.PanMax = (int)Convert::ToSingle(items[10], fi);                
+                        ht.TiltCenter = (int)Convert::ToSingle(items[11], fi);            
+                        ht.TiltMin = (int)Convert::ToSingle(items[12], fi);               
+                        ht.TiltMax = (int)Convert::ToSingle(items[13], fi);               
+                        ht.RollCenter = (int)Convert::ToSingle(items[14], fi);            
+                        ht.RollMin = (int)Convert::ToSingle(items[15], fi);               
+                        ht.RollMax = (int)Convert::ToSingle(items[16], fi);               
+                        ht.PanCh = (byte)Convert::ToSingle(items[17], fi); 
+                        ht.TiltCh = (byte)Convert::ToSingle(items[18], fi);
+                        ht.RollCh = (byte)Convert::ToSingle(items[19], fi);
                     }
                 }
             }
@@ -163,7 +164,7 @@ public: // methods
     {
         if ( Port->IsOpen)
         {
-            Port->WriteLine(String::Format("$SAVE"));
+            Port->WriteLine("$SAVE\n");
         }
     }
 
@@ -172,7 +173,7 @@ public: // methods
         if ( Port->IsOpen)
         {
             Port->DiscardInBuffer();
-            Port->WriteLine(String::Format("$VERS"));
+            Port->WriteLine("$VERS\n");
             String^ versLine = ReadData();
             try
             {
@@ -207,28 +208,28 @@ public: // methods
         if ( Port->IsOpen)
         {
             if ( Start )
-                Port->WriteLine(String::Format("$PLST"));
+                Port->WriteLine("$PLST\n");
             else
             {
-                Port->WriteLine(String::Format("$PLEN"));
-                _AccelStreaming = false;
-                _MagStreaming = false;
+                Port->WriteLine("$PLEN\n");
+                //_AccelStreaming = false;
+                //_MagStreaming = false;
                 _MagAccelStreaming = false;
             }
             _TrackStreaming = Start;
             _Streaming = Start;
         }
     }
-    
+/*    
     System::Void StreamAccelData(bool Start)
     {
         if ( Port->IsOpen)
         {
             if ( Start )
-                Port->WriteLine(String::Format("$GRAV"));
+                Port->WriteLine("$GRAV\n");
             else
             {
-                Port->WriteLine(String::Format("$GREN"));
+                Port->WriteLine("$GREN\n");
                 _MagStreaming = false;
                 _MagAccelStreaming = false;
                 _TrackStreaming = false;
@@ -255,7 +256,7 @@ public: // methods
             _Streaming = Start;
         }
     }
-
+	*/
     System::Void StreamMagAccelData(bool Start)
     {
         if ( Port->IsOpen)
@@ -263,12 +264,12 @@ public: // methods
             if ( Port->IsOpen)
             {
                 if ( Start )
-                    Port->WriteLine(String::Format("$CMAS"));
+                    Port->WriteLine("$CMAS\n");
                 else
                 {
-                    Port->WriteLine(String::Format("$CMAE"));
-                    _AccelStreaming = false;
-                    _MagStreaming = false;
+                    Port->WriteLine("$CMAE\n");
+                    //_AccelStreaming = false;
+                    //_MagStreaming = false;
                     _TrackStreaming = false;
                 }
                 _MagAccelStreaming = Start;
@@ -277,38 +278,90 @@ public: // methods
         }
     }
 
-    System::Void StoreAccelCal(int XOffset, int YOffset, int ZOffset)
+    System::Void StoreAccelCal(System::Double XOffset, System::Double YOffset, System::Double ZOffset)
     {
         if ( Port->IsOpen)
         {
-            StreamAccelData(false);
+//            StreamAccelData(false);
             Sleep(250);
 
-            String^ xtemp = Convert::ToString(XOffset + 2000);
-            String^ ytemp = Convert::ToString(YOffset + 2000);
-            String^ ztemp = Convert::ToString(ZOffset + 2000);
+            String^ xtemp = Convert::ToString((XOffset*10));
+            String^ ytemp = Convert::ToString((YOffset*10));
+            String^ ztemp = Convert::ToString((ZOffset*10));
 
             Port->WriteLine(String::Format("${0},{1},{2}ACC", xtemp, ytemp, ztemp) );
         }
     }
-    
+
+	System::Void StoreAccelGain(System::Double X, System::Double Y, System::Double Z)
+    {
+        if ( Port->IsOpen)
+        {
+            Sleep(250);
+
+            String^ xtemp = Convert::ToString((X*10000));
+            String^ ytemp = Convert::ToString((Y*10000));
+            String^ ztemp = Convert::ToString((Z*10000));
+
+            Port->WriteLine(String::Format("${0},{1},{2}ACG\n", xtemp, ytemp, ztemp) );
+        }
+    }
+
+	System::Void StoreAccelDiagOff(System::Double X, System::Double Y, System::Double Z)
+    {
+        if ( Port->IsOpen)
+        {
+            Sleep(250);
+
+            String^ xtemp = Convert::ToString((X*10000));
+            String^ ytemp = Convert::ToString((Y*10000));
+            String^ ztemp = Convert::ToString((Z*10000));
+
+            Port->WriteLine(String::Format("${0},{1},{2}ACD\n", xtemp, ytemp, ztemp) );
+        }
+    }
+
     System::Void ResetAccelCal()
     {
         StoreAccelCal(0, 0, 0);
     }
 
-    System::Void StoreMagCal(int XOffset, int YOffset, int ZOffset)
+    System::Void StoreMagCal(System::Double XOffset, System::Double YOffset, System::Double ZOffset)
     {
         if ( Port->IsOpen)
         {
-            StreamMagData(false);
+//            StreamMagData(false);
             Sleep(250);
 
-            String^ xtemp = Convert::ToString(XOffset + 2000);
-            String^ ytemp = Convert::ToString(YOffset + 2000);
-            String^ ztemp = Convert::ToString(ZOffset + 2000);
+            String^ xtemp = Convert::ToString((XOffset*10));
+            String^ ytemp = Convert::ToString((YOffset*10));
+            String^ ztemp = Convert::ToString((ZOffset*10));
 
-            Port->WriteLine(String::Format("${0},{1},{2}MAG",xtemp,ytemp,ztemp) );
+            Port->WriteLine(String::Format("${0},{1},{2}MAG\n",xtemp,ytemp,ztemp) );
+        }
+    }
+
+	System::Void StoreMagGain(System::Double X, System::Double Y, System::Double Z)
+    {
+        if ( Port->IsOpen)
+        {
+            String^ xtemp = Convert::ToString((X*10000));
+            String^ ytemp = Convert::ToString((Y*10000));
+            String^ ztemp = Convert::ToString((Z*10000));
+
+            Port->WriteLine(String::Format("${0},{1},{2}MGA\n",xtemp,ytemp,ztemp) );
+        }
+    }
+
+	    System::Void StoreMagDiagOff(System::Double X, System::Double Y, System::Double Z)
+    {
+        if ( Port->IsOpen)
+        {
+            String^ xtemp = Convert::ToString((X*10000));
+            String^ ytemp = Convert::ToString((Y*10000));
+            String^ ztemp = Convert::ToString((Z*10000));
+
+            Port->WriteLine(String::Format("${0},{1},{2}MDA\n",xtemp,ytemp,ztemp) );
         }
     }
 
@@ -319,18 +372,22 @@ public: // methods
 
     System::Void CalibrateGyro()    {
         if ( Port->IsOpen)        {
-            Port->WriteLine(String::Format("$CALG"));
+            Port->WriteLine("$CALG\n");
         }
     }
 
     System::String^ ReadData()
     {
         System::String^ line;
-        
+     again:
         try {
             line = Port->ReadLine();
-        }
-        catch (System::Exception^ e){
+			if(line[0]=='#') goto again;
+        }		
+		catch (System::Exception^ e){
+			
+			Debug::WriteLine( e->Message );
+			
 			return "#Error#";
         }
 		if(line == "$OK!$")
@@ -344,7 +401,7 @@ public: // objects
     System::IO::Ports::SerialPort^ Port;
 
 public: // properties
-
+/*
     property bool AccelStreaming
     {
         bool get()
@@ -359,6 +416,7 @@ public: // properties
             return _MagStreaming;
         }
     }
+*/
     property bool MagAccelStreaming
     {
         bool get()
@@ -393,8 +451,8 @@ public: // properties
 private:
 
     bool _TrackStreaming;
-    bool _MagStreaming;
-    bool _AccelStreaming;
+ //   bool _MagStreaming;
+//    bool _AccelStreaming;
     bool _MagAccelStreaming;
     bool _Streaming;
     float _FWVersion;

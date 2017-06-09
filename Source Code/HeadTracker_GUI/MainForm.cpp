@@ -20,9 +20,11 @@ HTSETTINGS HTSettings;
 
 int serialbyte = 0;
 unsigned char linecount = 0;
-float SerialData[25];
+double SerialData[25];
 int Serialindex = 0;
 long i = 0;
+bool port_busy = false;
+
 
 //--------------------------------------------------------------------------------------
 // Func: main
@@ -77,13 +79,13 @@ System::Void Form1::UpdateUIFromSettings(HTSETTINGS& Settings)
 {
     try
     {
-        textBox_LP_value->Text = Convert::ToString(Settings.LPTiltRoll, 10);
-        textBox_LP_valuePan->Text = Convert::ToString(Settings.LPPan, 10);
-        GyroWeight_tiltRoll->Text = Convert::ToString(Settings.GyroWeightTiltRoll, 10);
-        GyroWeight_pan->Text = Convert::ToString(Settings.GyroWeightPan, 10);
-        servoGainPan->Text = Convert::ToString(Settings.ServoGainPan, 10);
-        servoGainTilt->Text = Convert::ToString(Settings.ServoGainTilt, 10);
-        servoGainRoll->Text = Convert::ToString(Settings.ServoGainRoll, 10);
+        textBox_LP_value->Text = Convert::ToString(Settings.LPTiltRoll);
+        textBox_LP_valuePan->Text = Convert::ToString(Settings.LPPan);
+        GyroWeight_tiltRoll->Text = Convert::ToString(Settings.GyroWeightTiltRoll);
+        GyroWeight_pan->Text = Convert::ToString(Settings.GyroWeightPan);
+        servoGainPan->Text = Convert::ToString(Settings.ServoGainPan);
+        servoGainTilt->Text = Convert::ToString(Settings.ServoGainTilt);
+        servoGainRoll->Text = Convert::ToString(Settings.ServoGainRoll);
     
         // Channels
         inputPanCh->SelectedIndex = Settings.PanCh;
@@ -106,9 +108,9 @@ System::Void Form1::UpdateUIFromSettings(HTSETTINGS& Settings)
         inputRollTravlMax->Text = Convert::ToString(Settings.RollMax, 10);
 
         // Track bars
-        panGainTrackBar->Value = Settings.ServoGainPan;
-        tiltGainTrackBar->Value = Settings.ServoGainTilt;
-        rollGainTrackBar->Value = Settings.ServoGainRoll;
+        panGainTrackBar->Value = (int)Settings.ServoGainPan;
+        tiltGainTrackBar->Value = (int)Settings.ServoGainTilt;
+        rollGainTrackBar->Value = (int)Settings.ServoGainRoll;
         panCenterTrackBar->Value = Settings.PanCenter;
         panMinTrackBar->Value = Settings.PanMin;
         panMaxTrackBar->Value = Settings.PanMax;
@@ -129,6 +131,19 @@ System::Void Form1::UpdateUIFromSettings(HTSETTINGS& Settings)
     }
 }
 
+
+System::Double myConvert(System::String^ s){
+	System:Double d =0;
+	try {
+		d=Convert::ToDouble(s);
+	}catch (System::Exception^ e)		
+    {
+			s = s->Replace(".", ",");
+			d=Convert::ToDouble(s);
+	}
+	return d;
+}
+
 //--------------------------------------------------------------------------------------
 // Func: UpdateSettingsFromUI
 // Desc: Updates the specified settings struct with the user-provided settings from the
@@ -136,15 +151,15 @@ System::Void Form1::UpdateUIFromSettings(HTSETTINGS& Settings)
 //--------------------------------------------------------------------------------------
 System::Void Form1::UpdateSettingsFromUI(HTSETTINGS& Settings)
 {
-    Settings.LPTiltRoll = Convert::ToInt32(textBox_LP_value->Text);
-    Settings.LPPan = Convert::ToInt32(textBox_LP_valuePan->Text);
+    Settings.LPTiltRoll = myConvert(textBox_LP_value->Text);
+    Settings.LPPan = myConvert(textBox_LP_valuePan->Text);
 
-    Settings.GyroWeightTiltRoll = Convert::ToInt32(GyroWeight_tiltRoll->Text);
-    Settings.GyroWeightPan = Convert::ToInt32(GyroWeight_pan->Text);
+    Settings.GyroWeightTiltRoll = myConvert(GyroWeight_tiltRoll->Text);
+    Settings.GyroWeightPan = myConvert(GyroWeight_pan->Text);
 
-    Settings.ServoGainPan = Convert::ToInt32(servoGainPan->Text);
-    Settings.ServoGainTilt = Convert::ToInt32(servoGainTilt->Text);
-    Settings.ServoGainRoll = Convert::ToInt32(servoGainRoll->Text);
+    Settings.ServoGainPan = myConvert(servoGainPan->Text);
+    Settings.ServoGainTilt = myConvert(servoGainTilt->Text);
+    Settings.ServoGainRoll = myConvert(servoGainRoll->Text);
 
     int temp = 0;
 
@@ -176,24 +191,19 @@ System::Void Form1::UpdateSettingsFromUI(HTSETTINGS& Settings)
     Settings.RollCh = Convert::ToByte(inputRollCh->Text);
 }
 
-/*
-System::Void onReady(void){
-        //RetrieveSettings();
-		HTSettings = TrackerWrap::Tracker->RetrieveSettings();
-        Form1::theForm->UpdateUIFromSettings(HTSettings);
-        float f = TrackerWrap::Tracker->Version;
-        Form1::theForm->Serial_output_box->Text += String::Format("Firmware Version {0}\r\n", f);
-        //Form1::theForm->comPortTimer->Enabled = false;
-}
-*/
+
 System::Void Form1::onReady(void){
+		port_busy=true;
 		RetrieveSettings();
+		port_busy=false;
         UpdateUIFromSettings(HTSettings);
 
+		port_busy=true;
 		TrackerWrap::Tracker->GetVersion();
+		port_busy=false;
 
-        float f = TrackerWrap::Tracker->Version;
-        Serial_output_box->Text += String::Format("\r\nFirmware Version {0}\r\n", f);
+        double f = TrackerWrap::Tracker->Version;
+        Serial_output_box->Text += String::Format("\r\nFirmware Version {0}\r\n", (round(f*100))/100.0);
 }
 
 
@@ -228,12 +238,11 @@ System::Void Form1::btn_connect_Click(System::Object^ sender, System::EventArgs^
 
 		comPortTimer->Enabled = false;
 
-		//Sleep(5000);
         
 /*	all in function onReady()
 		RetrieveSettings();
         UpdateUIFromSettings(HTSettings);
-        float f = TrackerWrap::Tracker->Version;
+        double f = TrackerWrap::Tracker->Version;
         Serial_output_box->Text += String::Format("Firmware Version {0}\r\n", f);
 		comPortTimer->Enabled = false;
         
@@ -289,13 +298,14 @@ System::Void Form1::lineReceived(System::String^ line){
 System::Void Form1::timer1_Tick(System::Object^ sender, System::EventArgs^ e) {
 	byte lastbyte;
 	serialbyte=-1;
-
-    if (TrackerWrap::Tracker->Port->IsOpen && !_CalWizard->Visible) {
+	
+    if (TrackerWrap::Tracker->Port->IsOpen && !_CalWizard->Visible && !port_busy) {
         while(TrackerWrap::Tracker->Port->BytesToRead > 0)    {
 			lastbyte=serialbyte;
             serialbyte = (TrackerWrap::Tracker->Port->ReadChar());
 
-            Serial_output_box->Text += Convert::ToChar((serialbyte));
+			if (!TrackerWrap::Tracker->TrackStreaming)
+				Serial_output_box->Text += Convert::ToChar((serialbyte));
 
 			if(serialbyte == 10) serialbyte = 13;
 
@@ -303,41 +313,48 @@ System::Void Form1::timer1_Tick(System::Object^ sender, System::EventArgs^ e) {
             if (serialbyte == 13)          {
 				if(lastbyte==13) continue;
 
+				Debug::WriteLine(rLine);
+
+				if(rLine=="" || rLine[0]=='#') {
+					rLine = "";
+					continue; // comment
+				}
+
                 linecount++;
 
-				lineReceived(rLine);
-				rLine="";
-
-                if (linecount > 300)
-                {
-                    Serial_output_box->Clear();
-                    linecount = 0;
-                }
-            } else
-				rLine += Convert::ToChar((serialbyte));
-
-            if (TrackerWrap::Tracker->TrackStreaming) {
-                if (serialbyte == 13)  {
+	            if (TrackerWrap::Tracker->TrackStreaming) {
                     i++;
                     
                     if (i == 1){
                         chart1->ChartAreas["ChartArea1"]->BackColor = System::Drawing::Color::WhiteSmoke;
                     }
-                    
-                    chart1->Series["Tilt"]->Points->AddXY(i, SerialData[0] / 100 - 90);
-                    chart1->Series["Roll"]->Points->AddXY(i, SerialData[1] / 100 - 90);
-                    chart1->Series["Pan"]->Points->AddXY(i, SerialData[2] / 100 - 180);
 
-                    SerialData[0] = 0;
-                    SerialData[1] = 0;
-                    SerialData[2] = 0;
-                    Serialindex   = 0;
-                } else if (serialbyte == 44) {
-                    Serialindex++;
-                } else if (serialbyte > 47 && serialbyte < 58) {
-                    SerialData[Serialindex] = SerialData[Serialindex] * 10 + (serialbyte - 48);
+					array<String^>^ data = rLine->Split(',');
+					
+					NumberFormatInfo^ provider = gcnew NumberFormatInfo;
+				    provider->NumberDecimalSeparator = ".";					
+
+					try { // отработка разных команд сбивает вывод
+						chart1->Series["Tilt"]->Points->AddXY(i, Convert::ToDouble(data[0],provider) );
+						chart1->Series["Roll"]->Points->AddXY(i, Convert::ToDouble(data[1],provider) );
+						chart1->Series["Pan" ]->Points->AddXY(i, Convert::ToDouble(data[2],provider) );
+					} catch(System::Exception^ e){
+						Debug::WriteLine("conversion error! "+e->Message);
+					}
+
+					
+                } else
+					lineReceived(rLine);
+
+				rLine="";
+
+                if (linecount > 300) {
+                    Serial_output_box->Clear();
+                    linecount = 0;
                 }
-            }
+            } else
+				rLine += Convert::ToChar(serialbyte);
+
         }
     }	 
 }
@@ -367,8 +384,10 @@ System::Void Form1::comPortTimer_Tick(System::Object^  sender, System::EventArgs
 //--------------------------------------------------------------------------------------
 System::Void Form1::start_HT_Click(System::Object^ sender, System::EventArgs^ e)
 {
-    if ( TrackerWrap::Tracker->Port->IsOpen )
+    if ( TrackerWrap::Tracker->Port->IsOpen ){
+		chart1->ChartAreas["ChartArea1"]->BackColor = System::Drawing::Color::WhiteSmoke;
         TrackerWrap::Tracker->StreamTrackingData(true);
+	}
 }
 
 //--------------------------------------------------------------------------------------
@@ -440,7 +459,7 @@ System::Void Form1::exitToolStripMenuItem_Click(System::Object^ sender, System::
 //--------------------------------------------------------------------------------------
 System::Void Form1::aboutToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
 {
-    MessageBox::Show("DIY headtracker project\n - Written by Dennis Frie 2012\n - Augmented by Mark Mansur 2013");
+    MessageBox::Show("DIY headtracker project\n - Written by Dennis Frie 2012\n - Augmented by Mark Mansur 2013 - renewed by NG 2017");
 }
 
 //--------------------------------------------------------------------------------------
@@ -943,6 +962,21 @@ System::Void Form1::OnCalWizardRot_Menu(System::Object^  sender, System::EventAr
     _CalWizard->Show();
 }
 
+System::Void Form1::ChannelChanged(System::Object^  sender, int id){
+	System::Windows::Forms::TextBox^ xx;
+	xx=(System::Windows::Forms::TextBox^)sender;
+
+	try {
+		channels[id] = Convert::ToInt32(xx->Text);
+	} catch(System::Exception^ e){
+		channels[id] = 0;
+	}
+	if(channels[id]>12){
+		xx->Text = Convert::ToString(channels[id]=12);
+	}
+
+}
+
 //--------------------------------------------------------------------------------------
 // Func: OnExportSettingsToFile_Menu
 // Desc: Exports settings from the UI to a file.
@@ -988,7 +1022,7 @@ System::Void Form1::OnExportSettingsToFile_Menu(System::Object^ sender, System::
             UpdateSettingsFromUI(settings);
 
             System::IO::StreamWriter^ sw = gcnew System::IO::StreamWriter(saveFileDialog->FileName);
-            float f = TrackerWrap::Tracker->Version;
+            double f = TrackerWrap::Tracker->Version;
             sw->WriteLine("{0} : FW Version", f);
             sw->WriteLine("{0} : LPTiltRoll", settings.LPTiltRoll);
             sw->WriteLine("{0} : LPPan", settings.LPPan);
@@ -1042,7 +1076,7 @@ System::Void Form1::OnImportSettingsFromFile_Menu(System::Object^ sender, System
 
             String^ str;
             int count = 0;
-            float fw = 0.0;
+            double fw = 0.0;
             while ((str = din->ReadLine()) != nullptr) 
             {
                 array<wchar_t>^ delim = {' '};

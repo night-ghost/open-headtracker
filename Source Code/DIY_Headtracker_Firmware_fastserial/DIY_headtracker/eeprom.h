@@ -1,16 +1,13 @@
-//#include <FastSerial.h>
 
-//#include <Arduino.h>
+#define EEPROM_VERSION 12
 
-#define EEPROM_VERSION 11
-
-//#include <EEPROM.h>
+#include <inttypes.h>
 
 #pragma pack(push,1)
 struct Settings {
 //0
-    byte vers; 
-    byte servoReverseMask;
+    uint8_t vers; 
+    uint8_t servoReverseMask;
 
     int servoPanCenter;
     int servoTiltCenter;
@@ -38,13 +35,16 @@ struct Settings {
     float gyroOff[3];
     float accOffset[3];
 
-    byte htChannels[4];
+    uint8_t htChannels[4];
 
 // NEW
-    byte PpmIn_PpmOut[16];
+    uint8_t PpmIn_PpmOut[16];
 
     float magGain[3];
     float accGain[3];
+
+    float magDiagOff[3];
+    float accDiagOff[3];
 };
 
 typedef struct Settings settings;
@@ -55,4 +55,4 @@ extern settings sets;
 
 void ReadSets(void);
 void WriteSets(void);
-void WriteSets(int addr, int length);
+void WriteSets(uint16_t addr, uint8_t length);

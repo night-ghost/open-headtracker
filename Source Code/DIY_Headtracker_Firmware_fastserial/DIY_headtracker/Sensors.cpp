@@ -4,13 +4,19 @@
 //#include <FastSerial.h>
 #include <SingleSerial.h>
 
-#include "config.h"
 #include "Arduino.h"
+#include "config.h"
 #include "functions.h"
-#include <Wire.h>
+
+//#define TWI_FREQ 250000L
+//#include <Wire.h> don't use slow odd library
+#include <I2C.h>
+
 #include "sensors.h"
 
 #include "FourtOrderFilter.h"
+#include "AP_Math.h"
+#include "AP_Common.h"
 
 /*
 Reference for basic sensor/IMU understanding/calculation:
@@ -25,6 +31,11 @@ http://www.pololu.com/file/download/LSM303DLH-compass-app-note.pdf?file_id=0J434
 //
 #define ITG3205_ADDR 0x68    // The address of ITG3205
 #define ITG3205_X_ADDR 0x1D  // Start address for x-axis
+#define ITG3205_SMPLRT_DIV 0x15 // sample rate
+#define ITG3205_DLPF 0x16       // digital filter
+#define ITG3205_IRQR 0x17       // interrupt configuration
+#define ITG3205_STATUS 0x1A     // status register
+
 #define SCALING_FACTOR 15.1     // Scaling factor - used when converting to angle
 
 // Accelerometer
@@ -71,7 +82,9 @@ http://www.pololu.com/file/download/LSM303DLH-compass-app-note.pdf?file_id=0J434
 #define AP_COMPASS_TYPE_HMC5843         0x02
 #define AP_COMPASS_TYPE_HMC5883L        0x03
 
-byte compass;
+extern void serial_write_S(char c);
+
+byte compass_id;
 byte compass_mode=0;
 
 unsigned char ADXL345_ID = 0;
@@ -81,6 +94,8 @@ unsigned char HMC_ID = 0;
 // Variables defined elsewhere
 //
 extern long channel_value[];
+
+extern char outputMagAcc;
 
 // Local variables
 //
@@ -93,22 +108,14 @@ char resetValues = 1;        // Used to reset headtracker/re-center.
 
 int   accRaw[3];             // Raw readings from accelerometer
 float accG[3];               // G-force in each direction
-float accAngle[3];           // Measured angle from accelerometer
-float R;                     // Unit vector - total G.
+float Radius;                     // Unit vector - total G.
 
 int   gyroRaw[3];            // Raw readings from gyro
-float gyroAngle[3];          // Angle from gyro 
-#if DEBUG
-float angleRaw[3];           // Temp for angle-calculation
-#endif
-float gyro[3];
+float gyroV[3];
 
 int   magRaw[3];             // Raw readings from magnetometer
 float magV[3];               // Normalized readings from magnetometer
 float MR=1;                  // magnet field normalization, 1 before calibration
-float mx=0, my=0, mz=0;      // Calculated magnetometer values in all directions with pan/tilt compensation
-float magAngle[3];           // Measured angles from magnetometer
-
 
 float magPosOff[3]; // калибровочные данные магнетометра
 float magNegOff[3];
@@ -116,33 +123,35 @@ float magGain[3];
 float magMGain[3]={0,0,0}; // калибровочная нормировка по осям 
 
 // Final angles for headtracker:
-float tiltAngle = 90;       // Tilt angle
-float tiltAngleLP = 90;     // Tilt angle with low pass FilterSensorData
-float lastTiltAngle = 90;   // Used in low pass FilterSensorData.
+float tiltAngle = 0;       // Tilt angle
+float tiltAngleLP = 0;     // Tilt angle with low pass FilterSensorData
 
 float rollAngle = 0;        // Roll angle
-float rollAngleLP = 90;     // Roll angle with low pass FilterSensorData
-float lastRollAngle = 90;   // Used in low pass FilterSensorData
+float rollAngleLP = 0;     // Roll angle with low pass FilterSensorData
 
-float panAngle = 90;        // Pan angle
-float panAngleLP = 90;      // Pan angle with low pass FilterSensorData
-float lastPanAngle = 90;    // Used in low pass FilterSensorData
+float panAngle = 0;        // Pan angle
+float panAngleLP = 0;      // Pan angle with low pass FilterSensorData
 
 // Start values - center position for head tracker
 float tiltStart = 0;
 float panStart = 0;
 float rollStart = 0;
 
-char TrackerStarted = 0;
+
+Vector3f compass, accel, gyro;
+
+byte TrackerStarted = 0;
+
+extern bool do_output;
 
 // Settings
 //
 settings sets;
 /*
-float tiltRollBeta = 0.75;
-float panBeta = 0.75;
-float gyroWeightTiltRoll = 0.98;
-float gyroWeightPan = 0.98;
+float tiltRollBeta = 10;
+float panBeta = 10;
+float gyroWeightTiltRoll = 1/50;
+float gyroWeightPan = 1/50;
 
 int servoPanCenter = 1500;
 int servoTiltCenter = 1500;
@@ -167,9 +176,6 @@ float gyroOff[3] = {0, 0, 0};
 unsigned char htChannels[3] = {8, 7, 6}; // pan, tilt, roll
 */
 
-// дабы не считать дважды
-float sin_tilt, cos_tilt, sin_roll, cos_roll;
-
 extern float dynFactor;
 
 
@@ -178,15 +184,19 @@ extern float dynFactor;
 
 
 // Function used to write to I2C:
-void WriteToI2C(int device, byte address, byte val){
+static inline void WriteToI2C(byte device, byte address, byte val){
+    i2c.write(device, address, val);
+/*
     Wire.beginTransmission(device);
     Wire.write(address);
     Wire.write(val);
     Wire.endTransmission();
+*/
 }
 
 // Function to read from I2C
-void ReadFromI2C(int device, byte address, char bytesToRead){
+static inline void ReadFromI2C(byte device, byte address, byte bytesToRead){
+/*
     Wire.beginTransmission(device);
     Wire.write(address);
     Wire.endTransmission();
@@ -194,53 +204,30 @@ void ReadFromI2C(int device, byte address, char bytesToRead){
     Wire.beginTransmission(device);
     Wire.requestFrom(device, bytesToRead);
    
-    char i = 0;   
+    uint8_t i = 0;   
     while ( Wire.available() ) {
         sb.sensorBuffer[i++] = Wire.read();
     }
     Wire.endTransmission();
-}
-
-void trackerOutput()
-{
-  Serial.print(tiltAngleLP - tiltStart );
-  Serial.write(',');
-  Serial.print(rollAngleLP - rollStart );
-  Serial.write(',');  
-  Serial.println(panAngleLP );
-}
-/*
-void calMagOutput()
-{
-    Serial.printf_P(PSTR("%d,%d,%d\n"), magRaw[0], magRaw[1], magRaw[2]);
-}
-
-void calAccOutput()
-{
-    Serial.printf_P(PSTR("%d,%d,%d\n"), accRaw[0], accRaw[1], accRaw[2]);
-}
 */
+    i2c.read(device, address, bytesToRead, sb.sensorBuffer);
 
-
-// for calibration
-void calMagAccOutput()
-{
-    Serial.printf_P(PSTR("%d,%d,%d,%d,%d,%d\n"),  magRaw[0], magRaw[1], magRaw[2], accRaw[0], accRaw[1], accRaw[2]);
 }
+
 
 
 
 void readCompassRaw(void){    // Read x, y, z from magnetometer;
     ReadFromI2C(HMC_ADDR, HMC_X_ADDR, 6);
 
-    magRaw[0] =     sb.sensorBuffer[1] | ((int)sb.sensorBuffer[0] << 8);
+    magRaw[0] =     sb.sensorBuffer[1] | ((uint16_t)sb.sensorBuffer[0] << 8);
 
-//    if (compass == AP_COMPASS_TYPE_HMC5883L) {
+//    if (compass_id == AP_COMPASS_TYPE_HMC5883L) {
 //        magRaw[1] = sb.sensorBuffer[3] | ((int)sb.sensorBuffer[2] << 8);
 //        magRaw[2] = sb.sensorBuffer[5] | ((int)sb.sensorBuffer[4] << 8);
 //    } else {
-        magRaw[2] = sb.sensorBuffer[3] | ((int)sb.sensorBuffer[2] << 8);
-        magRaw[1] = sb.sensorBuffer[5] | ((int)sb.sensorBuffer[4] << 8);
+        magRaw[2] = sb.sensorBuffer[3] | ((uint16_t)sb.sensorBuffer[2] << 8);
+        magRaw[1] = sb.sensorBuffer[5] | ((uint16_t)sb.sensorBuffer[4] << 8);
 //    }
 
 
@@ -257,6 +244,14 @@ void readAccelRaw(){
 }
 
 void readGyroRaw(){
+#if 0
+    byte d;
+    do {
+        ReadFromI2C(ITG3205_ADDR, ITG3205_STATUS, 1);
+        d = sb.sensorBuffer[0];
+    } while(! (d & 1)); // wait fore data ready
+#endif
+
     // Read x, y, z from gyro, pack the data
     ReadFromI2C(ITG3205_ADDR, ITG3205_X_ADDR, 6);
 
@@ -264,6 +259,14 @@ void readGyroRaw(){
     gyroRaw[1] =  ((int)sb.sensorBuffer[3] | ((int)sb.sensorBuffer[2] << 8) ) * -1;
     gyroRaw[2] =  ((int)sb.sensorBuffer[5] | ((int)sb.sensorBuffer[4] << 8) ) *  1;
 
+}
+
+void GyroCalc() {
+
+    readGyroRaw();
+    gyroV[0] = gyroRaw[0]-sets.gyroOff[0];
+    gyroV[1] = gyroRaw[1]-sets.gyroOff[1];
+    gyroV[2] = gyroRaw[2]-sets.gyroOff[2];
 }
 
 //--------------------------------------------------------------------------------------
@@ -297,9 +300,22 @@ void SetGyroOffset()
     sets.gyroOff[2] /= GYRO_AVG;
      
 #if (DEBUG)     
-    Serial.printf_P(PSTR("Gyro offset measured: %f %f %f\n"), sets.gyroOff[0], sets.gyroOff[1], sets.gyroOff[2]);
+    serial_printf_3(PSTR("#Gyro offset measured: %f %f %f\n"), sets.gyroOff[0], sets.gyroOff[1], sets.gyroOff[2]);
 #endif 
 }
+
+
+Vector3f correctField(const Vector3f *f, const Vector3f *offsets, const Vector3f *diagonals, const Vector3f *offdiagonals){
+
+    Matrix3f mat(
+        diagonals->x,    offdiagonals->x, offdiagonals->y,
+        offdiagonals->x,    diagonals->y, offdiagonals->z,
+        offdiagonals->y, offdiagonals->z,    diagonals->z
+    );
+
+    return  mat * (*f + *offsets);    
+}
+
 
 //--------------------------------------------------------------------------------------
 // Func: CalibrateMag
@@ -348,18 +364,9 @@ void CalibrateMag() {
     delay(10);
     WriteToI2C(HMC_ADDR,ModeRegister, ContinuousConversion);
 
-
-    magPosOff[0] /= AVG_COUNT;
-    magPosOff[1] /= AVG_COUNT;
-    magPosOff[2] /= AVG_COUNT;
-
-    magNegOff[0] /= AVG_COUNT;
-    magNegOff[1] /= AVG_COUNT;
-    magNegOff[2] /= AVG_COUNT;
-
-    magGain[0] = -2500 / (magNegOff[0] - magPosOff[0]);
-    magGain[1] = -2500 / (magNegOff[1] - magPosOff[1]);
-    magGain[2] = -2500 / (magNegOff[2] - magPosOff[2]);
+    magGain[0] = -2500.0 * AVG_COUNT / (magNegOff[0] - magPosOff[0]);
+    magGain[1] = -2500.0 * AVG_COUNT / (magNegOff[1] - magPosOff[1]);
+    magGain[2] = -2500.0 * AVG_COUNT / (magNegOff[2] - magPosOff[2]);
 
 
     float magTmp[3]={0,0,0};
@@ -376,25 +383,27 @@ void CalibrateMag() {
 	magTmp[2] += magV[2];  
     }
 
-    magTmp[0] /= AVG_COUNT;
-    magTmp[1] /= AVG_COUNT;
-    magTmp[2] /= AVG_COUNT;
+    MR = sqrt(magTmp[0]*magTmp[0] + magTmp[1]*magTmp[1] + magTmp[2]*magTmp[2]) / AVG_COUNT;
 
-    MR = sqrt(magTmp[0]*magTmp[0] + magTmp[1]*magTmp[1] + magTmp[2]*magTmp[2]);
-
-    magMGain[0] = magGain[0]/(MR * sets.magGain[0]); // калибровочная нормировка
+/*    magMGain[0] = magGain[0]/(MR * sets.magGain[0]); // калибровочная нормировка
     magMGain[1] = magGain[1]/(MR * sets.magGain[1]);
     magMGain[2] = magGain[2]/(MR * sets.magGain[2]);
+*/
+    magMGain[0] = magGain[0]/MR; // калибровочная нормировка to 1
+    magMGain[1] = magGain[1]/MR;
+    magMGain[2] = magGain[2]/MR;
 
 #if (DEBUG)
 //    Serial.printf_P(PSTR("Mag type: %i\n"), compass);
-    Serial.printf_P(PSTR("Mag cal: %f:%f, %f:%f, %f:%f, gain: %f %f %f\n"), magNegOff[0] , magPosOff[0], magNegOff[1], magPosOff[1], magNegOff[2], magPosOff[2], magGain[0], magGain[1], magGain[2]);
+    serial_printf_3(PSTR("#Mag cal: %f:%f, %f:"), magNegOff[0] , magPosOff[0], magNegOff[1]);
+    serial_printf_3(PSTR("%f, %f:%f, "),         magPosOff[1], magNegOff[2], magPosOff[2]);
+    serial_printf_3(PSTR(" gain: %f %f %f\n"),   magGain[0], magGain[1], magGain[2]);
 //    Serial.printf_P(PSTR("Mag offset: %f %f %f\n"), sets.magOffset[0], sets.magOffset[1], sets.magOffset[2]);
 //    Serial.printf_P(PSTR("Mag gain:   %f %f %f\n"), sets.magGain[0], sets.magGain[1], sets.magGain[2]);
 
 //    Serial.printf_P(PSTR("Mag tmp: %f %f %f\n"), magTmp[0], magTmp[1], magTmp[2]);
 //    Serial.printf_P(PSTR("Mag norm: %f\n"), MR);
-//    Serial.printf_P(PSTR("Mag norm gain: %f %f %f\n"), magMGain[0], magMGain[1], magMGain[2]);
+    serial_printf_3(PSTR("#Mag norm gain: %f %f %f\n"), magMGain[0], magMGain[1], magMGain[2]);
 #endif          
 }
 
@@ -404,45 +413,29 @@ void getCompass(){
     if (magRaw[0] == -4096)
 	magV[0]=0;
     else
-        magV[0] =  (magRaw[0] - sets.magOffset[0]) * magMGain[0]; // / MR / sets.magGain[0];
+        magV[0] =  magRaw[0] * magMGain[0]; // / MR / sets.magGain[0];
     
     if (magRaw[1] == -4096)
 	magV[1]=0;
     else
-	magV[1] = (-magRaw[1] - sets.magOffset[1]) * magMGain[1];
+	magV[1] = -magRaw[1] * magMGain[1];
 
 
     if (magRaw[2] == -4096)
 	magV[2]=0;
     else
-	magV[2] = (-magRaw[2] - sets.magOffset[2]) * magMGain[2];
+	magV[2] = -magRaw[2] * magMGain[2];
+
+
+// correct field by calibration data
+    compass = correctField(new Vector3f(magV), new Vector3f(sets.magOffset), new Vector3f(sets.magGain), new Vector3f(sets.magDiagOff) );
 
 }
 
 
-//--------------------------------------------------------------------------------------
-// Func: GyroCalc
-// Desc: Calculate angle from gyro-data
-//--------------------------------------------------------------------------------------
-void GyroCalc() {
-    readGyroRaw();
-
-    gyro[0] = gyroRaw[0]-sets.gyroOff[0];
-    gyro[1] = gyroRaw[1]-sets.gyroOff[1];
-    gyro[2] = gyroRaw[2]-sets.gyroOff[2];
-
-#if DEBUG
-    for (byte i=0; i<3; i++) {
-        angleRaw[i]  += gyro[i];
-        gyroAngle[i]  = angleRaw[i] / (SAMPLERATE*SCALING_FACTOR);
-    }
-#endif
-}
+// for calibration
 
 
-//--------------------------------------------------------------------------------------
-// Func: AccelCalc
-// Desc: Calculate angle from accelerometer data
 //--------------------------------------------------------------------------------------
 
 
@@ -451,18 +444,28 @@ void GyroCalc() {
 #define SCALE_FACTOR_Z                                  7.8125      // mg/LSB
 #define GRAVITATIONAL_ACCELERATION                      9.81 //meter/sec/sec
 
-void getAccel(){
+void AccelCalc(){	    // Calculate final angles:
     readAccelRaw();
     
 /*    accG[0] = ((float)accRaw[0] + sets.accOffset[0] ) / ACC_SENS;
     accG[1] = ((float)accRaw[1] + sets.accOffset[1] ) / ACC_SENS;
     accG[2] = ((float)accRaw[2] + sets.accOffset[2] ) / ACC_SENS;
 */
-    accG[0] = ((float)accRaw[0] + sets.accOffset[0] ) * SCALE_FACTOR_X * GRAVITATIONAL_ACCELERATION / 1000.0 / 2 / sets.accGain[0];
+/*    accG[0] = ((float)accRaw[0] + sets.accOffset[0] ) * SCALE_FACTOR_X * GRAVITATIONAL_ACCELERATION / 1000.0 / 2 / sets.accGain[0];
     accG[1] = ((float)accRaw[1] + sets.accOffset[1] ) * SCALE_FACTOR_Y * GRAVITATIONAL_ACCELERATION / 1000.0 / 2 / sets.accGain[1];
     accG[2] = ((float)accRaw[2] + sets.accOffset[2] ) * SCALE_FACTOR_Z * GRAVITATIONAL_ACCELERATION / 1000.0 / 2 / sets.accGain[2];
+*/
+
+    accG[0] = (float)accRaw[0] * SCALE_FACTOR_X * GRAVITATIONAL_ACCELERATION / 1000.0 / 2;
+    accG[1] = (float)accRaw[1] * SCALE_FACTOR_Y * GRAVITATIONAL_ACCELERATION / 1000.0 / 2;
+    accG[2] = (float)accRaw[2] * SCALE_FACTOR_Z * GRAVITATIONAL_ACCELERATION / 1000.0 / 2;
+
+
+// correct data by calibration
+    accel = correctField(new Vector3f(accG), new Vector3f(sets.accOffset), new Vector3f(sets.accGain), new Vector3f(sets.accDiagOff) );
 
 }
+
 
 void CalibrateAccel(){
 #define ACCEL_AVG 64
@@ -470,70 +473,35 @@ void CalibrateAccel(){
     // R^2 = Rx^2+Ry^2+Rz^2    
     float x=0,y=0,z=0;
 
+
 // skip first measurements
 /*    for(byte i=0;i<ACCEL_AVG;i++){
 	delay(18);	// 50hz
 
-	getAccel();
+	AccelCalc();
     }
 */
- 
+
+/*
+//    uint8_t count=0;
     for(byte i=0;i<ACCEL_AVG;i++){
 	delay(18);	// 50hz
 
-	getAccel();
+	AccelCalc();
 
-	x+=accG[0];
-	y+=accG[1];
-	z+=accG[2];
+	x+=accel.x;
+	y+=accel.y;
+	z+=accel.z;	
     }
 
-    x /= ACCEL_AVG;
-    y /= ACCEL_AVG;
-    z /= ACCEL_AVG;
+    Radius = sqrt((x*x) + (y*y) + (z*z)) / ACCEL_AVG;
 
-    R = sqrt((x*x) + (y*y) + (z*z));
-
-}
-
-void AccelCalc(){	    // Calculate final angles:
-    getAccel();
-
-/*    
-    for (byte i = 0; i<3; i++) {
-	float v=accG[i] / R;
-
-
-	if(v < -1)
-	    accAngle[i] = 180;
-	else if(v > 1)
-	    accAngle[i] = 0;
-	else
-	    accAngle[i] = acos(v) * TO_GRADUS;
-    }
+#if DEBUG
+    Serial.printf_P(PSTR("#Accel calibrated R=%f\n"), Radius);
+#endif
 */
-
-	float p;
-	p=-accG[0] / R;
-	if(p < -1)
-	    accAngle[0] = -90;
-	else if(p > 1)
-	    accAngle[0] =  90;
-	else
-	    accAngle[0] = (p=asin(p) ) * TO_GRADUS;
-	
-	p=(accG[1] / R) / cos(p);
-	
-	if(accAngle[0] == -90 || accAngle[0] == 90)
-	    accAngle[1]=0;
-	else if(p < -1)
-	    accAngle[1] = -90;
-	else if(p > 1)
-	    accAngle[1] = 90;
-	else
-	    accAngle[1] = asin( p ) * TO_GRADUS;
-
 }
+
 
 //--------------------------------------------------------------------------------------
 // Func: MagCalc
@@ -548,44 +516,6 @@ void CalcMagAngle(){
         cos_roll = cos(roll90 * FROM_GRADUS);
 */
 
-
-/*
-    mx  = magV[0] * cos_tilt
-        + magV[1] * sin_tilt;
-
-    my =  magV[0] * sin_roll * sin_tilt
-        + magV[2] * cos_roll
-        - magV[1] * sin_roll * cos_tilt;
-*/
-  
-
-// tilt/roll compensation
-
-    mx  = magV[0] * cos_tilt
-        + magV[2] * sin_tilt;
-
-    my =  magV[0] * sin_roll * sin_tilt
-        + magV[1] * cos_roll
-	- magV[2] * sin_roll * cos_tilt;
-
-    mz = -magV[0] * cos_roll * sin_tilt
-        + magV[1] * sin_roll
-	+ magV[2] * cos_roll * cos_tilt;
-  
-  
-    if(mx==0 && my==0)
-	magAngle[2]=90;
-    else {
-	// Calculate pan-angle from magnetometer. 
-//	magAngle[2] = atan2(mx, my) * TO_GRADUS + 90;
-	magAngle[2] = atan2(my, mx) * TO_GRADUS + 90;
-    }
-  
-    if (magAngle[2] > 180) {
-        magAngle[2] -= 360;
-    } else if (magAngle[2] < -180) {
-        magAngle[2] += 360; 
-    }
 }
 
 void MagCalc(){
@@ -603,10 +533,14 @@ void CalibrationStart(){
 
     sets.magGain[0]=sets.magGain[1]=sets.magGain[2]=1;
     sets.accGain[0]=sets.accGain[1]=sets.accGain[2]=1;
+
+    sets.magDiagOff[0]=sets.magDiagOff[1]=sets.magDiagOff[2]=0;
+    sets.accDiagOff[0]=sets.accDiagOff[1]=sets.accDiagOff[2]=0;
     
-    magMGain[0]=sets.magOffset[1]=sets.magOffset[2]=1;
+//    magMGain[0]=magMGain[1]=magMGain[2]=1;
 }
 
+uint32_t beep_start_time=0;
 
 //--------------------------------------------------------------------------------------
 // Func: Filter
@@ -614,8 +548,6 @@ void CalibrationStart(){
 //--------------------------------------------------------------------------------------
 void FilterSensorData()
 {
-    int temp = 0;
-
     // Used to set initial values. 
     if (resetValues) {
 #if FATSHARK_HT_MODULE
@@ -624,78 +556,178 @@ void FilterSensorData()
 	digitalWrite(ARDUINO_LED, HIGH); 
         resetValues = 0; 
 
+        tiltStart = tiltAngleLP;
+        panStart  = panAngleLP;
+        rollStart = rollAngleLP;
 
-        tiltStart = panStart = rollStart = 0;
-
-	for(byte i=0; i<4; i++){  
-            GyroCalc();
-            AccelCalc();
-            MagCalc();
-        
-            tiltStart = accAngle[0];
-            rollStart = accAngle[1];
-            panStart  = magAngle[2];
-	}
-	
-
-        tiltStart /= 4;
-        rollStart /= 4;
-        panStart  /= 4;
-
-        panAngle = 0;
-
-//        tiltStart = tiltAngle;
-//        panStart =  rollAngle;
-//        rollStart = panAngle;
-
-
+//        delay(100); cause loop slow-out
 #if DEBUG
-    Serial.printf_P(PSTR("Center reset! tilt=%f rol=%f pan=%f\n"), tiltStart, rollStart, panStart);
-#endif
-
-#if FATSHARK_HT_MODULE
-        digitalWrite(BUZZER, LOW);
+        serial_printf_3(PSTR("#Center reset! tilt=%f rol=%f pan=%f\n"), tiltStart, rollStart, panStart);
 #endif
 	digitalWrite(ARDUINO_LED, LOW); //ready
+        
+        beep_start_time=millis();
     }
+
+#if FATSHARK_HT_MODULE
+    if(beep_start_time && (millis()-beep_start_time)>100){
+        beep_start_time=0;
+        digitalWrite(BUZZER, LOW);
+    }
+#endif
+    
+
+    // Filter the high frequency noise from vibrations 
+    float acc_x = computeFourthOrder(accel.x, &fourthOrder[0]);
+    float acc_y = computeFourthOrder(accel.y, &fourthOrder[1]);
+    float acc_z = computeFourthOrder(accel.z, &fourthOrder[2]);
+    
+    Radius = sqrt((acc_x*acc_x) + (acc_y*acc_y) + (acc_z*acc_z)); // to normalize
+
+    float p;
+    float angle_x, angle_y;
+    float as=0;
+
+    p=-acc_x / Radius;
+
+    if(p <= -1)
+        angle_x = -90;
+    else if(p >= 1)
+        angle_x =  90;
+    else
+        angle_x = (as=asin(p) ) * TO_GRADUS;
+
+    float v=(acc_y / Radius) / cos(as);
+
+    if(angle_x == -90 || angle_x == 90)
+        angle_y=0;
+    else if(v <= -1)
+        angle_y = -90;
+    else if(v >= 1)
+        angle_y = 90;
+    else
+        angle_y = asin(v) * TO_GRADUS;
+
     float ta = (tiltAngle - 90) * FROM_GRADUS,
 	  ra = (rollAngle - 90) * FROM_GRADUS;
 
-
-    // Filter the high frequency noise from vibrations 
-    accG[0] = computeFourthOrder(accG[0], &fourthOrder[0]);
-    accG[1] = computeFourthOrder(accG[1], &fourthOrder[1]);
-    accG[2] = computeFourthOrder(accG[2], &fourthOrder[2]);
-
-    cos_tilt=cos(ta);
-    sin_tilt=sin(ta);
-    cos_roll=cos(ra);
-    sin_roll=sin(ra);
+    float cos_tilt=cos(ta);
+    float sin_tilt=sin(ta);
+    float cos_roll=cos(ra);
+    float sin_roll=sin(ra);
 
 
-    float magA = magAngle[2] - panStart;
-    if (magA > 180) {
-        magA -= 360;
-    } else if (magA < -180) {
-        magA += 360; 
+
+// tilt/roll compensation
+    float mx=0, my=0, mz=0;      // Calculated magnetometer values in all directions with pan/tilt compensation
+
+    mx  = compass.x * cos_tilt + compass.z * sin_tilt;
+
+    my =  compass.x * sin_roll * sin_tilt
+        + compass.y * cos_roll
+	- compass.z * sin_roll * cos_tilt;
+
+    mz = -compass.x * cos_roll * sin_tilt
+        + compass.y * sin_roll
+	+ compass.z * cos_roll * cos_tilt;
+  
+    float angle_z;
+  
+    if(mx==0 && my==0)
+	angle_z=90;
+    else {
+	// Calculate pan-angle from magnetometer. 
+	angle_z = atan2(my, mx) * TO_GRADUS + 90;
+    }
+    
+    angle_z -= panStart;
+  
+    if (angle_z > 180) {
+        angle_z -= 360;
+    } else if (angle_z < -180) {
+        angle_z += 360; 
     }
 
 
-    // Simple FilterSensorData, uses mainly gyro-data, but uses accelerometer to compensate for drift
-    rollAngle = (rollAngle + (gyro[0] *  cos_tilt +  gyro[2] *  sin_tilt)                          / (SAMPLERATE * SCALING_FACTOR)) * sets.gyroWeightTiltRoll + accAngle[1] * (1 - sets.gyroWeightTiltRoll);
-    tiltAngle = (tiltAngle + (gyro[1] *  cos_roll +  gyro[2] * -sin_roll)                          / (SAMPLERATE * SCALING_FACTOR)) * sets.gyroWeightTiltRoll + accAngle[0] * (1 - sets.gyroWeightTiltRoll);
-    panAngle  = (panAngle  + (gyro[2] *  cos_tilt + (gyro[0] * -sin_tilt) + ( gyro[1] * sin_roll)) / (SAMPLERATE * SCALING_FACTOR)) * sets.gyroWeightPan      + magA        * (1 - sets.gyroWeightPan);
+    float ga[3];
+
+    // correct gyros
+    ga[0] =  gyroV[0] *  cos_tilt + gyroV[2] *  sin_tilt;
+    ga[1] =  gyroV[1] *  cos_roll + gyroV[2] * -sin_roll;
+    ga[2] =  gyroV[2] *  cos_tilt + gyroV[0] * -sin_tilt + gyroV[1] * sin_roll;
+
+
+    ga[0] /= (SAMPLERATE * SCALING_FACTOR);
+    ga[1] /= (SAMPLERATE * SCALING_FACTOR);
+    ga[2] /= (SAMPLERATE * SCALING_FACTOR);
+
+
+    // uses mainly gyro-data, but uses accelerometer to compensate for drift
+/*
+    rollAngle = (rollAngle + ga[0]) * sets.gyroWeightTiltRoll  +  angle_y * (1 - sets.gyroWeightTiltRoll);
+    tiltAngle = (tiltAngle + ga[1]) * sets.gyroWeightTiltRoll  +  angle_x * (1 - sets.gyroWeightTiltRoll);
+    panAngle  = (panAngle  + ga[2]) * sets.gyroWeightPan       +  angle_z * (1 - sets.gyroWeightPan);
+*/
+    filterAB(rollAngle, ga[0], angle_y, sets.gyroWeightTiltRoll);
+    filterAB(tiltAngle, ga[1], angle_x, sets.gyroWeightTiltRoll);
+    filterAB(panAngle,  ga[2], angle_z, sets.gyroWeightPan);
+
+/*
+    x = (x+a)*k + b*(1-k)
+    x = x*k + a*k + b*(1-k)
+    x = x + x*(k-1) + a*k + b*(1-k)
+    x += x*(k-1) + a*k + b*(1-k)
+    x += a*k + b*(1-k) - x*(1-k)
+    x += a*k + (b-x)*(1-k)
+*/
+
+#ifdef DEBUG
+    if(do_output){
+        if(outputDbg == 1){ // accel
+            serial_printi_3(PSTR("\nraw: %d,%d,%d\n"),  accRaw[0], accRaw[1], accRaw[2]);
+            serial_printf_3(PSTR(  "G:   %f,%f,%f R="), accG[0], accG[1], accG[2]);
+            serial_print(Radius);
+
+            serial_printf_3(PSTR("\nOK:    %f,%f,%f\n"), accel.x, accel.y, accel.z);
+            serial_printf_3(PSTR(  "filter %f,%f,%f\n"), acc_x, acc_y, acc_z);
+            serial_printf_3(PSTR(  "ang:   %f,%f,%f\n"), angle_x, angle_y, angle_z);
+
+        }
+        if(outputDbg == 2){ // gyro
+            serial_printi_3(PSTR("\nraw: %d,%d,%d\n"), gyroRaw[0], gyroRaw[1], gyroRaw[2]);
+            serial_printi_3(PSTR(  "OK:  %d,%d,%d\n"), gyroV[0], gyroV[1], gyroV[2]);
+            serial_printf_3(PSTR(  "ang: %f,%f,%f\n"), ga[0], ga[1], ga[2]);
+        }
+        if(outputDbg == 3){ //compass
+            serial_printi_3(PSTR("\nraw:  %d,%d,%d\n"), magRaw[0], magRaw[1], magRaw[2]);
+            serial_printf_3(PSTR(  "norm: %f,%f,%f\n"), magV[0],   magV[1],   magV[2]);
+            serial_printf_3(PSTR(  "ok:   %f,%f,%f\n"), compass.x, compass.y, compass.z);
+            serial_printf_3(PSTR(  "m*:   %f,%f,%f\n"), mx, my, mz);    
+            Serial.printf_P(PSTR(  "s/c:  %f,%f,%f,%f\n"), sin_roll, cos_roll, sin_tilt, cos_tilt );    
+            serial_printf_1(PSTR(  "ang z:%f\n"), angle_z);
+        }
+        
+        if(outputDbg == 4){ //full state
+            Serial.printf_P(PSTR("\nroll: %f,%f,%f (0=%f)\n"), ga[0], angle_y, rollAngle, rollStart);
+            Serial.printf_P(PSTR(  "tilt: %f,%f,%f (0=%f)\n"), ga[1], angle_x, tiltAngle, tiltStart);
+            Serial.printf_P(PSTR(  "pan:  %f,%f,%f (0=%f)\n"), ga[2], angle_z, panAngle,  panStart);
+        }
+ #if PPM_IN
+        if(outputDbg == 5)          testPPM_in();
+ #endif
+        
+    }
+
+    do_output=false;
+
+#endif
+
+    // All low-pass filters
+    filter(tiltAngleLP, tiltAngle, sets.tiltRollBeta);
+    filter(rollAngleLP, rollAngle, sets.tiltRollBeta);
+    filter(panAngleLP,  panAngle,  sets.panBeta);
 
     if (TrackerStarted)  {
-        // All low-pass filters
-        tiltAngleLP = tiltAngle * sets.tiltRollBeta + (1 - sets.tiltRollBeta) * lastTiltAngle;
-        lastTiltAngle = tiltAngleLP;
-  
-        rollAngleLP = rollAngle * sets.tiltRollBeta + (1 - sets.tiltRollBeta) * lastRollAngle;
-        lastRollAngle = rollAngleLP;
-
-        panAngleLP = panAngle * sets.panBeta        + (1 - sets.panBeta) * lastPanAngle;
-        lastPanAngle = panAngleLP;
 
 	{
             float angleTemp = (panAngleLP - panStart)  * sets.panFactor * dynFactor + sets.servoPanCenter;
@@ -725,18 +757,22 @@ void FilterSensorData()
 //--------------------------------------------------------------------------------------
 void InitSensors()
 {
+    i2c.begin();               // Start I2C
+    i2c.setSpeed(250000L);
+    i2c.timeOut(50); // ms
+    
     ReadFromI2C(ITG3205_ADDR, 0x00, 1);
     ITG3205_ID = sb.sensorBuffer[0];
  
 #if DEBUG
-    Serial.printf_P(PSTR("ITG3205: %d\n"), ITG3205_ID);
+    serial_printi_1(PSTR("#ITG3205: %d\n"), ITG3205_ID);
 #endif 
  
     ReadFromI2C(ADXL345_ADDR, 0x00, 1);
     ADXL345_ID = sb.sensorBuffer[0];
  
 #if DEBUG
-    Serial.printf_P(PSTR("    ADXL: %d\n"), ADXL345_ID); 
+    serial_printi_1(PSTR("#    ADXL: %d\n"), ADXL345_ID); 
 #endif  
 
     // Accelerometer increase G-range (+/- 16G)
@@ -745,10 +781,15 @@ void InitSensors()
     HMC_ID = sb.sensorBuffer[0];
  
 #if DEBUG
-    Serial.printf_P(PSTR("    HMC: %d\n"), HMC_ID); 
+    serial_printi_1(PSTR("#    HMC: %d\n"), HMC_ID); 
 #endif  
 
-    WriteToI2C(ITG3205_ADDR, 22, 0x18 | 2); //Register 22 – DLPF, Full Scale - full range 98hz filter
+//    WriteToI2C(ITG3205_ADDR, 22, 0x18 | 2); //Register 22 – DLPF, Full Scale - full range 98hz filter
+    WriteToI2C(ITG3205_ADDR, 22, 0x18 | 4); //Register 22 – DLPF, Full Scale - full range 20hz filter
+    WriteToI2C(ITG3205_ADDR, ITG3205_IRQR, 1<<5 || // LATCH_INT_EN
+                                           1<<4 || // INT_ANYRD_2CLEAR
+                                           1 );    // RAW_RDY_EN 
+
 
     //  ADXL345 POWER_CTL
     WriteToI2C(ADXL345_ADDR, 0x2D, 0); 
@@ -774,7 +815,7 @@ void InitSensors()
 //    Serial.print_P(PSTR("compass type HMC5883L\n")); 
 #endif  
 
-        compass = AP_COMPASS_TYPE_HMC5883L;
+        compass_id = AP_COMPASS_TYPE_HMC5883L;
 //        calibration_gain = 0b01100000; //0x60; - 660
 //        calibration_gain = 0b11100000; //  230
         calibration_gain = 0b10000000; //  440
@@ -791,7 +832,7 @@ void InitSensors()
 #if DEBUG
 //    Serial.print_P(PSTR("compass type HMC5883\n")); 
 #endif  
-	compass = AP_COMPASS_TYPE_HMC5843;
+	compass_id = AP_COMPASS_TYPE_HMC5843;
     } else {
 
 	Serial.printf_P(PSTR("Error detecting compass! %x - %x\n"), d, compass_mode);
@@ -815,10 +856,12 @@ void InitSensors()
 //       startup. Button press resets are handled during filtering. (Needs refactor)
 //--------------------------------------------------------------------------------------
 
+#if 0
 void ResetCenter()
 {
     resetValues = 0; 
-    
+
+
     // Not sure what Dennis is doing here. Giving it
     // time to stabilize, since this is called at setup time?
     for (byte k = 0; k < 16; k++) {
@@ -843,11 +886,12 @@ void ResetCenter()
     panAngle  = magAngle[2];
 
 #if DEBUG
-    Serial.printf_P(PSTR("Center reset v2! tilt=%f rol=%f pan=%f\n"), tiltStart, rollStart, panStart);
+    serial_printf_3(PSTR("Center reset v2! tilt=%f rol=%f pan=%f\n"), tiltStart, rollStart, panStart);
 #endif
     
     TrackerStarted = 1;
 }
+#endif
 
 
 //--------------------------------------------------------------------------------------
@@ -856,12 +900,11 @@ void ResetCenter()
 //--------------------------------------------------------------------------------------
 void SensorInfoPrint()
 { 
-   Serial.printf_P(PSTR("Mag cal: %f,%f,%f,%f,%f,%f\n"), magNegOff[0] - magPosOff[0], magNegOff[1] - magPosOff[1], magNegOff[2] - magPosOff[2], 
-					   magGain[0], magGain[1], magGain[2]);   
+    serial_printf_3a(PSTR("Mag cal: %f,%f,%f,"), magNegOff[0] - magPosOff[0], magNegOff[1] - magPosOff[1], magNegOff[2] - magPosOff[2]);
+   
+    serial_printf_3(PSTR("%f,%f,%f\n"),                     magGain[0], magGain[1], magGain[2]);   
 
-   Serial.printf_P(PSTR("ADXL345 ID: %d\nITG3205 ID: %d\nHMC ID: %d\n"), (int)ADXL345_ID, (int)ITG3205_ID,  (int)HMC_ID);
-
-//   Serial.printf_P(PSTR("R= %f gyroWeightTiltRoll=%f gyroWeightPan=%f\n"), R, sets.gyroWeightTiltRoll, sets.gyroWeightPan );
+    serial_printi_3(PSTR("ADXL345 ID: %d\nITG3205 ID: %d\nHMC ID: %d\n"), (int)ADXL345_ID, (int)ITG3205_ID,  (int)HMC_ID);
 }
 
 
@@ -870,83 +913,43 @@ void SensorInfoPrint()
 // ===============================================
 
 #if DEBUG
-void testAccOutput() // dbg1
-{
-    Serial.printf_P(PSTR("raw: %d,%d,%d\n"), accRaw[0], accRaw[1], accRaw[2]);
-    Serial.printf_P(PSTR("G:   %f,%f,%f R=%f\n"), accG[0], accG[1], accG[2],R);
-    Serial.printf_P(PSTR("ang: %f,%f,%f\n"), accAngle[0], accAngle[1], accAngle[2]);
-}
-
-void testGyroOutput() // dbg2
-{  
-    Serial.printf_P(PSTR("raw: %d,%d,%d\n"), gyroRaw[0], gyroRaw[1], gyroRaw[2]);
-    Serial.printf_P(PSTR("ang: %f,%f,%f\n"), gyroAngle[0], gyroAngle[1], gyroAngle[2]);
-
-}
-
-void testMagOutput() // dbg4
-{
-    Serial.printf_P(PSTR("raw:  %d,%d,%d\n"), magRaw[0], magRaw[1], magRaw[2]);
-    Serial.printf_P(PSTR("norm: %f,%f,%f\n"), magV[0], magV[1], magV[2]);
-    Serial.printf_P(PSTR(" m*:  %f,%f,%f\n"), mx, my, mz);
-    Serial.printf_P(PSTR("cal:  %f,%f,%f\n"), magAngle[0], magAngle[1], magAngle[2]);
-}
-
-void testTiltOutput()
-{ 
-    Serial.printf_P(PSTR("tilt: %f,%f,%f\n"), gyroAngle[1], accAngle[0]-tiltStart, tiltAngle-tiltStart);
-}
-
-void testRollOutput()
-{
-    Serial.printf_P(PSTR("roll: %f,%f,%f\n"), gyroAngle[0], accAngle[1]-rollStart, rollAngle-rollStart);
-}
-
-void testPanOutput()
-{
-    Serial.printf_P(PSTR("pan: %f,%f,%f\n"), gyroAngle[2], magAngle[2], panAngle);
-}
 
 // output calculated values, output as "csv"
-void testAllData()
-{  
-    Serial.printf_P(PSTR("tilt: %f,%f,%f (0=%f)\n"), gyroAngle[1], accAngle[0], tiltAngle, tiltStart);
-    Serial.printf_P(PSTR("roll: %f,%f,%f (0=%f)\n"), gyroAngle[0], accAngle[1], rollAngle, rollStart);
-    Serial.printf_P(PSTR("pan:  %f,%f,%f (0=%f)\n"), gyroAngle[2], magAngle[2], panAngle,  panStart);
-}
 
 // All sensor output as "csv". 
-void testAllSensors()
+void testAllSensors() //  not used
 {  
-    Serial.print(accRaw[0]);  
-    Serial.write(',');          
-    Serial.print(accRaw[1]);  
-    Serial.write(',');              
-    Serial.print(accRaw[2]);  
+    serial_print(accRaw[0]);  
+    serial_write_S(',');          
+    serial_print(accRaw[1]);  
+    serial_write_S(',');              
+    serial_print(accRaw[2]);  
 
-    Serial.write(',');            
-    Serial.print(gyroRaw[0]);  
-    Serial.write(',');          
-    Serial.print(gyroRaw[1]);  
-    Serial.write(',');              
-    Serial.print(gyroRaw[2]);  
+    serial_write_S(',');            
+    serial_print(gyroRaw[0]);  
+    serial_write_S(',');          
+    serial_print(gyroRaw[1]);  
+    serial_write_S(',');              
+    serial_print(gyroRaw[2]);  
 
-    Serial.write(',');               
-    Serial.print(magRaw[0]);  
-    Serial.write(',');          
-    Serial.print(magRaw[1]);  
-    Serial.write(',');              
-    Serial.println(magRaw[2]);      
+    serial_write_S(',');               
+    serial_print(magRaw[0]);  
+    serial_write_S(',');          
+    serial_print(magRaw[1]);  
+    serial_write_S(',');              
+    serial_print(magRaw[2]);      
+    serial_println();
 }
 #endif
 
 void clearSettings() {
     sets.vers = EEPROM_VERSION;
 
-    sets.tiltRollBeta = 0.85;
-    sets.panBeta = 0.85;
-    sets.gyroWeightTiltRoll = 0.98;
-    sets.gyroWeightPan = 0.98;
+    sets.tiltRollBeta = 10;
+    sets.panBeta = 10;
+
+    sets.gyroWeightTiltRoll = 1/50.;
+    sets.gyroWeightPan = 1/50.;
 
     sets.servoPanCenter = 1500;
     sets.servoTiltCenter = 1500;
@@ -973,8 +976,38 @@ void clearSettings() {
     sets.magGain[0]=sets.magGain[1]=sets.magGain[2]=1;
     sets.accGain[0]=sets.accGain[1]=sets.accGain[2]=1;
 
+
+    sets.magDiagOff[0]=sets.magDiagOff[1]=sets.magDiagOff[2]=0;
+    sets.accDiagOff[0]=sets.accDiagOff[1]=sets.accDiagOff[2]=0;
+
     byte i;
     for(i=0; i<13; i++)
 	sets.PpmIn_PpmOut[i] = i;
 
 }
+
+
+void trackerOutput()
+{
+/*
+  serial_print(tiltAngleLP - tiltStart );
+  serial_write_S(',');
+  serial_print(rollAngleLP - rollStart );
+  serial_write_S(',');  
+  serial_print(panAngleLP);
+  serial_println();
+*/
+  
+  serial_printf_3a(PSTR("%f,%f,%f\n"),  tiltAngleLP - tiltStart, rollAngleLP - rollStart, panAngleLP );
+}
+
+void calMagAccOutput()
+{
+//    Serial.printf_P(PSTR("%d,%d,%d,%d,%d,%d\n"),  magRaw[0], magRaw[1], magRaw[2], accRaw[0], accRaw[1], accRaw[2]);
+
+// not raw! but normalized 
+    serial_printf_3(PSTR("%f,%f,%f,"),   magV[0], magV[1], magV[2]);
+    serial_printf_3(PSTR("%f,%f,%f\n"),  accG[0], accG[1], accG[2]);
+}
+
+

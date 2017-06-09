@@ -5,12 +5,11 @@
 
 //#include <FastSerial.h>
 #include <SingleSerial.h>
+#include "Arduino.h"
 
 #include "config.h"
-#include "Arduino.h"
 #include "functions.h"
 #include "sensors.h"
-#include <Wire.h>
 
 
 // Local variables
@@ -26,6 +25,8 @@ char read_sensors = 0;
 // external variables
 extern unsigned long buttonDownTime;
 
+extern void serial_write_S(char c);
+
 // Sensor_board,   x,y,z
 int acc_raw[3];
 int gyro_raw[3];
@@ -40,8 +41,8 @@ int channelValues[20];  // for input PPM
 #endif
 
 unsigned char channel_number = 1;
-char shift = 0;
-char time_out = 0;
+int8_t shift = 0;
+uint8_t time_out = 0;
 
 extern byte ht_paused;
 
@@ -51,9 +52,9 @@ extern byte ht_paused;
 //--------------------------------------------------------------------------------------
 #if DEBUG
 void PrintPPM(){
-  for (char j = 1; j < 13; j++)  {
+  for (byte j = 1; j < 13; j++)  {
       Serial.print(channel_value[j]);
-      Serial.write(',');
+      serial_write_S(',');
   }
   Serial.println();
 }
@@ -99,7 +100,7 @@ void InitPWMInterrupt(){
 
 
 #if (DEBUG)    
-    Serial.print_P(PSTR("PWM interrupt initialized\n"));
+    serial_print_P(PSTR("PWM interrupt initialized\n"));
 #endif
 }
 
@@ -109,118 +110,81 @@ void InitPWMInterrupt(){
 //--------------------------------------------------------------------------------------
 
 #define PRESCALE0 1024
-#define TIMER_CLOCK_FREQ0 16000000.0/PRESCALE0 // 16MHz
+#define TIMER_CLOCK_FREQ0 16000000.0/PRESCALE0 // 16MHz -> 16KHz
 
 void InitTimerInterrupt()
 {  
-  
-    TCCR0A = 
-       (0 << WGM00) |
-       (1 << WGM01) |
-       (0 << COM0A1) |
-       (0 << COM0A0) |
-       (0 << COM0B1) |
-       (0 << COM0B0);  
+    TCCR2A = 
+       (0 << WGM20) |
+       (1 << WGM21) |  // CTC mode - reset on OCR2A
+       (0 << COM2A1) |
+       (0 << COM2A0) |
+       (0 << COM2B1) |
+       (0 << COM2B0);  
    
     // 61 hz update-rate:
-    TCCR0B =
-        (0 << FOC0A)| // 
-        (0 << FOC0B)| // 
-        (1 << CS00) | // Prescale 1024 
-        (0 << CS01) | // Prescale 1024  
-        (1 << CS02) | // Prescale 1024
-        (0 << WGM02);
+    TCCR2B =
+        (0 << FOC2A)| // 
+        (0 << FOC2B)| // 
+        (1 << CS20) | // Prescale 1024 
+        (1 << CS21) | // Prescale 1024  
+        (1 << CS22) | // Prescale 1024
+        (0 << WGM22);
   
-    TIMSK0 = 
-        (0 << OCIE0B) |
-        (1 << OCIE0A) |
-        (1 << TOIE0);       
+    TIMSK2 = 
+        (0 << OCIE2B) |
+        (1 << OCIE2A) | // interrupt on compare
+        (0 << TOIE2);   // no interrupt on overflow
 
     int cnt= ((TIMER_CLOCK_FREQ0/SAMPLERATE)+0.5);
     if(cnt>255) cnt=255;
 
-//    OCR0B = 64 * 2;.
-//    OCR0A = 64 * 2;
-    OCR0B = (byte)cnt;
-    OCR0A = (byte)cnt;
-    
-//    OCR0B = 64 * 2; 
-//    OCR0A = 64 * 2;
+    OCR2B = (byte)cnt;
+    OCR2A = (byte)cnt;
 
 #if (DEBUG)    
-    Serial.printf_P(PSTR("Timer interrupt initialized: %d\n"),cnt);
+    serial_printi_1(PSTR("Timer interrupt initialized: %d\n"),cnt);
 #endif
 }
 
 
-#define PRESCALE 8
-#define TIMER_CLOCK_FREQ 16000000.0/PRESCALE // 16MHz
-    //Установка Таймера2.
-    //Конфигурирует 8-битный Таймер2 ATMega168 для выработки прерывания
-    //с заданной частотой.
-    //Возвращает начальное значение таймера, которое должно быть загружено в TCNT2
-    //внутри вашей процедуры ISR.
-    //Смотри пример использования ниже.
-byte  SetupTimer2(float timeoutFrequency){
-    unsigned char result; //Начальное значение таймера.
- 
-    //Подсчет начального значения таймера
-    result=(int)((256.0-(TIMER_CLOCK_FREQ/timeoutFrequency))+0.5);
-    //257 на самом деле должно быть 256, но я получил лучшие результаты с 257.
- 
-    //Установки Таймер2: Делитель частоты /8, режим 0
-    //Частота = 16MHz/8 = 2Mhz или 0.5 мкс
-    //Делитель /8 дает нам хороший рабочий диапазон
-    //так что сейчас мы просто жестко запрограммируем это.
-    
-    TCCR2A = 0;
-    TCCR2B = 0<<CS22 | 1<<CS21 | 0<<CS20;
- 
-    //Подключение прерывания по переполнению Timer2
-    TIMSK2 = 1<<TOIE2;
- 
-    //загружает таймер для первого цикла
-    TCNT2=256 - result + 1;
- 
-    return result;
-}
 
 //--------------------------------------------------------------------------------------
-// Func: TIMER0_COMPA_vect
-// Desc: Timer 0 compare A vector Sensor-interrupt. We query sensors on a timer, not
+// Func: TIMER2_COMPA_vect
+// Desc: Timer 2 compare A vector Sensor-interrupt. We query sensors on a timer, not
 //          during every loop.
 //--------------------------------------------------------------------------------------
-ISR(TIMER0_COMPA_vect){
-    // Reset counter - should be changed to CTC timer mode. 
-    TCNT0 = 0;
+uint32_t last_isr_t=0;
+uint32_t isr_time = 0;
 
+ISR(TIMER2_COMPA_vect){
+    // Reset counter - should be changed to CTC timer mode. 
+//    TCNT2 = 0;
+
+#if 0
+    uint32_t t=millis();
+    isr_time = t - last_isr_t;
+    last_isr_t=t;
+#endif
 
     if (!ht_paused && read_sensors == 1) {
         time_out++;
+        digitalWrite(ARDUINO_LED, HIGH);
+/* cause hangups
         if (time_out > 10) {
 #if DEBUG
-        Serial.println("Timing problem!!!"); 
+            serial_print_P(PSTR("Timing problem!!!\n")); 
 #endif
             time_out = 0;  
-            digitalWrite(ARDUINO_LED, HIGH);
         }
+*/
+    } else {
+        digitalWrite(ARDUINO_LED, LOW);
     }
     read_sensors = 1;
     buttonDownTime += 16; // every 16 milliseconds, at 61 hz.
 }
 
-#if DEBUG
-//--------------------------------------------------------------------------------------
-// Func: TIMER1_OVF_vect
-// Desc: Timer 1 overflow vector - only here for debugging/testing, as it should always
-//      be reset/cleared before overflow. 
-//--------------------------------------------------------------------------------------
-ISR(TIMER1_OVF_vect)
-{
-    Serial.print_P(PSTR("Timer 1 OVF\n"));
-}
-
-#endif
 
 //--------------------------------------------------------------------------------------
 // Func: TIMER1_COMPA_vect
@@ -346,11 +310,11 @@ void DetectPPM(){
 }  
 
 void testPPM_in(){
-    Serial.print_P(PSTR("Ch: "));
+    serial_print_P(PSTR("Ch: "));
     for(byte i=0; i<channelsDetected;i++){
-	Serial.printf_P(PSTR("%d "),channelValues[i]);
+	serial_printi_1(PSTR("%d "), channelValues[i]);
     }
-    Serial.write(10);
+    serial_write_S(10);
 
 }
 
@@ -393,4 +357,60 @@ ISR(TIMER1_CAPT_vect) {
 }
 
 #endif
+
+
+
+
+
+void NOINLINE filter( float &dst, const float val, const byte k){ // комплиментарный фильтр 1/k
+    if(dst==0 || k==0 || k==1) dst=val;
+    else
+        //dst = (val * k) + dst * (1.0 - k); 
+        //dst = val * k + dst - dst*k;
+        //dst = (val-dst)*k + dst;
+        dst+=(val-dst)/k;
+}
+
+void NOINLINE filter( float &dst, const float val, const float &k){ // комплиментарный фильтр 1/k
+    if(dst==0 || k==0 || k==1) dst=val;
+    else
+        //dst = (val * k) + dst * (1.0 - k); 
+        //dst = val * k + dst - dst*k;
+        //dst = (val-dst)*k + dst;
+        dst+=(val-dst)/k;
+}
+
+
+//  x = (x+a)*k + b*(1-k)
+//  x += a*k + (b-x)*(1-k),  k=1-z
+//  x += a*(1-z) + (b-x)*(1-(1-z))
+//  x += a*(1-z) + (b-x)*z
+//  x += a - a*z + (b-x)*z
+//  x += a + (b-x-a)*z
+
+void NOINLINE filterAB(float &dst, const float &a, const float b, const float &z)
+{
+    if(dst==0) dst = b;
+    else {
+        dst += a + (b-dst-a)*z;
+    }
+}
+
+void serial_write_S(char c){ Serial.write(c); }
+void serial_print(int i) { Serial.print(i); }
+void serial_print(float i) { Serial.print(i); }
+void serial_print(uint16_t i) { Serial.print(i); }
+void serial_print_P(PGM_P f) { Serial.printf_P(f); }
+void serial_printi_1(PGM_P f, uint16_t i) { Serial.printf_P(f,i); }
+void serial_printl_1(PGM_P f, uint32_t i) { Serial.printf_P(f,i); }
+void serial_printf_1(PGM_P f, float l) { Serial.printf_P(f,l); }
+
+void serial_printf_3(PGM_P f, float &f1, float &f2, float &f3) { Serial.printf_P(f,f1,f2,f3); };
+void serial_printf_3a(PGM_P f, float f1, float f2, float f3) { Serial.printf_P(f,f1,f2,f3); };
+void serial_printi_3(PGM_P f, uint16_t f1, uint16_t f2, uint16_t f3) { Serial.printf_P(f,f1,f2,f3); };
+
+void serial_println() { serial_println(); }
+
+float NOINLINE float_div(float &f, uint8_t div){   return f/div; }
+float NOINLINE float_div(float &f, float &div){    return f/div; }
 

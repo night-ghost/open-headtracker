@@ -2,6 +2,8 @@
 // File: Sensors.cpp
 // Desc: Implementations sensor board functionality.
 //-----------------------------------------------------------------------------
+#include <SingleSerial.h>
+
 #include "config.h"
 #include "Arduino.h"
 #include "functions.h"
@@ -395,11 +397,9 @@ void MagCalc()
     mx = magRaw[0] * cos((testAngle) / 57.3)
         + magRaw[1] * sin(testAngle / 57.3);
 
-    my = magRaw[0] * sin((rollAngle - 90) / 57.3)
-        * sin((tiltAngle - 90) / 57.3)
+    my = magRaw[0] * sin((rollAngle - 90) / 57.3)   * sin((tiltAngle - 90) / 57.3)
         + magRaw[2] * cos((rollAngle - 90) / 57.3)
-        - magRaw[1] * sin((rollAngle - 90) / 57.3)
-        * cos((tiltAngle - 90) / 57.3);
+        - magRaw[1] * sin((rollAngle - 90) / 57.3)  * cos((tiltAngle - 90) / 57.3);
       
     // Calculate pan-angle from magnetometer. 
     magAngle[2] = (atan(mx / my) * 57.3 + 90);
@@ -461,7 +461,8 @@ void FilterSensorData()
     }
 
     // Simple FilterSensorData, uses mainly gyro-data, but uses accelerometer to compensate for drift
-    rollAngle = (rollAngle + ((gyroRaw[0] - gyroOff[0]) * cos((tiltAngle - 90) / 57.3) +  (gyroRaw[2] - gyroOff[2]) *  sin((tiltAngle - 90) / 57.3)) / (SAMPLERATE * SCALING_FACTOR)) * gyroWeightTiltRoll + accAngle[1] * (1 - gyroWeightTiltRoll);
+    rollAngle = (rollAngle + ((gyroRaw[0] - gyroOff[0]) * cos((tiltAngle - 90) / 57.3) +  (gyroRaw[2] - gyroOff[2]) *  sin((tiltAngle - 90) / 57.3)) 
+    / (SAMPLERATE * SCALING_FACTOR)) * gyroWeightTiltRoll + accAngle[1] * (1 - gyroWeightTiltRoll);
     tiltAngle = (tiltAngle + ((gyroRaw[1] - gyroOff[1]) * cos((rollAngle - 90) / 57.3) +  (gyroRaw[2] - gyroOff[2]) * -sin((rollAngle - 90) / 57.3)) / (SAMPLERATE * SCALING_FACTOR)) * gyroWeightTiltRoll + accAngle[0] * (1 - gyroWeightTiltRoll);
     panAngle  = (panAngle  + ((gyroRaw[2] - gyroOff[2]) * cos((tiltAngle - 90) / 57.3) + ((gyroRaw[0] - gyroOff[0]) * -sin((tiltAngle - 90) / 57.3) ) + ( ((gyroRaw[1] - gyroOff[1]) * 1) * (sin((rollAngle - 90) / 57.3)))) / (SAMPLERATE * SCALING_FACTOR)) * GyroWeightPan + magAngle[2] * (1 - GyroWeightPan);
 
